@@ -1,0 +1,12 @@
+.venv/
+.git/
+.github/
+tests/
+*.png
+.coverage
+.env
+.env.example
+state.json
+local.settings.json
+__pycache__/
+*.pyc
