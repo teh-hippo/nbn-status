@@ -475,7 +475,6 @@ def generate_html(
         </div>"""
 
     timestamp_ms = int(max((s.checked_at for _, s in results), default=time.time()) * 1000)
-    total_addresses = len(results)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -512,16 +511,23 @@ h1 {{ margin-bottom:1.5rem; font-weight:400; color:#a3a3a3; font-size:1.1rem }}
 <script>
 (function(){{
   var u=new Date({timestamp_ms}),el=document.getElementById('footer');
-  var total={total_addresses},refreshing=false;
+  var refreshing=false;
   function t(){{
     if(refreshing) return;
     var r=Math.max(0,60-Math.floor((Date.now()-u)/1e3));
     el.textContent='Last updated '+u.toLocaleTimeString()+', refreshing in '+r+'s';
     if(!r){{
       refreshing=true;
-      el.textContent='Refreshing...';
-      fetch(location.href).then(function(r){{return r.text()}}).then(function(html){{
-        document.open();document.write(html);document.close()
+      el.textContent='Refreshing\u2026';
+      fetch(location.href).then(function(r){{return r.text()}}).then(function(h){{
+        var d=new DOMParser().parseFromString(h,'text/html');
+        document.body.innerHTML=d.body.innerHTML;
+        var s=d.querySelectorAll('script');
+        s.forEach(function(x){{
+          var n=document.createElement('script');
+          n.textContent=x.textContent;
+          document.body.appendChild(n)
+        }})
       }}).catch(function(){{location.reload()}})
     }}
   }}
