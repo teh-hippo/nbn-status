@@ -25,7 +25,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
 
-      - run: uv sync --frozen
+      - name: Build deployment package
+        run: |
+          mkdir -p .deploy/.python_packages/lib/site-packages
+          cp function_app.py nbn_monitor.py host.json requirements.txt .deploy/
+          uv pip install --target .deploy/.python_packages/lib/site-packages -r requirements.txt
 
       - name: Azure Login (OIDC)
         uses: azure/login@v3
@@ -38,4 +42,4 @@ jobs:
         uses: Azure/functions-action@v1
         with:
           app-name: ${{ vars.AZURE_FUNCTION_APP_NAME }}
-          package: .
+          package: .deploy
