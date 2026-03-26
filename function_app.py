@@ -42,7 +42,7 @@ def poll_nbn(timer: func.TimerRequest) -> None:
         print(f"  {symbol} {addr.label}: {status.label}")
 
 
-@app.route(route="", auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="/", auth_level=func.AuthLevel.ANONYMOUS)
 def status_page(req: func.HttpRequest) -> func.HttpResponse:
     """Serve the traffic-light status page."""
     addresses = nbn_monitor.load_addresses()
