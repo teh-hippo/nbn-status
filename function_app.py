@@ -13,12 +13,27 @@ import nbn_monitor
 app = func.FunctionApp()
 
 
-@app.timer_trigger(schedule="0 */5 * * * *", arg_name="timer", run_on_startup=False)
+@app.timer_trigger(schedule="0 */5 * * * *", arg_name="timer", run_on_startup=True)
 def poll_nbn(timer: func.TimerRequest) -> None:
     """Poll all addresses and notify on status changes."""
     addresses = nbn_monitor.load_addresses()
     results = nbn_monitor.check_all(addresses)
     previous = nbn_monitor.load_state()
+
+    # On first run (no previous state), send a summary notification
+    if not previous:
+        outages = [a for a, s in results if s.is_outage]
+        if outages:
+            msg = "Startup: " + ", ".join(a.label for a in outages) + " in outage"
+        else:
+            msg = "Startup: all addresses clear"
+        nbn_monitor.send_ntfy(
+            title="NBN Monitor Online",
+            message=msg,
+            priority="default",
+            tags="satellite",
+        )
+
     new_state = nbn_monitor.notify_changes(results, previous)
     nbn_monitor.save_state(new_state)
 
