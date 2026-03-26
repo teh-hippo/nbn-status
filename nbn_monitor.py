@@ -533,14 +533,20 @@ body {{ font-family:-apple-system,system-ui,sans-serif; background:#111; color:#
        display:flex; flex-direction:column; align-items:center;
        padding:2rem 1rem; padding-top:max(2rem, env(safe-area-inset-top)) }}
 h1 {{ margin-bottom:1.5rem; font-weight:400; color:#a3a3a3; font-size:1.1rem }}
-.card {{ display:flex; align-items:center; gap:1rem; background:#1a1a1a;
-         border-radius:12px; padding:1rem 1.5rem; margin-bottom:0.75rem;
-         width:100%; max-width:420px }}
+.card {{ display:flex; align-items:center; gap:0.75rem; background:#1a1a1a;
+         border-radius:12px; padding:1rem 1.25rem; margin-bottom:0.75rem;
+         width:100%; max-width:420px; flex-wrap:wrap }}
 .light {{ width:28px; height:28px; border-radius:50%; flex-shrink:0;
           box-shadow:0 0 12px currentColor }}
-.label {{ flex:1; font-weight:600; font-size:1rem }}
+.label {{ font-weight:600; font-size:1rem; flex:1 1 0; min-width:0;
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap }}
 .tag {{ font-size:0.7rem; font-weight:600; padding:3px 10px; border-radius:999px;
-        white-space:nowrap; flex-shrink:0 }}
+        white-space:nowrap; flex-shrink:0; overflow:hidden; text-overflow:ellipsis }}
+@media (max-width:420px) {{
+  .card {{ gap:0.5rem }}
+  .tag {{ flex-basis:100%; margin-left:calc(28px + 0.5rem);
+          max-width:calc(100% - 28px - 0.5rem) }}
+}}
 #footer {{ margin-top:1.5rem; font-size:0.75rem; color:#525252 }}
 </style>
 </head>
