@@ -48,7 +48,5 @@ def status_page(req: func.HttpRequest) -> func.HttpResponse:
     addresses = nbn_monitor.load_addresses()
     results = nbn_monitor.check_all(addresses)
     state = nbn_monitor.load_state()
-    state = nbn_monitor._update_state(results, state)
-    nbn_monitor.save_state(state)
     html = nbn_monitor.generate_html(results, state=state)
     return func.HttpResponse(html, mimetype="text/html", status_code=200)
