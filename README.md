@@ -51,9 +51,10 @@ uv run pytest tests/
 Deployed as an Azure Function App (Consumption Plan, Python 3.12).
 
 - **Timer trigger**: polls every 5 minutes, sends ntfy on status changes
-- **HTTP trigger**: serves the status page (function-key authenticated)
+- **HTTP trigger**: serves the status page at the root URL
+- **Auth**: Azure Entra ID (Easy Auth) with user assignment required
 - **CI/CD**: GitHub Actions validates on push, deploys on merge to `main`
-- **Auth**: OIDC federated credentials (no stored secrets)
+- **Deploy auth**: OIDC federated credentials (no stored secrets)
 - **Dependencies**: managed by [Renovate](https://docs.renovatebot.com/) with auto-merge
 
 See `deploy.sh` for initial Azure resource setup.
