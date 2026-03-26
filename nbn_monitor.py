@@ -31,6 +31,8 @@ NBN_HEADERS = {
 }
 
 STATE_FILE = Path(os.environ.get("NBN_STATE_FILE", "state.json"))
+_BLOB_CONTAINER = "nbn-state"
+_BLOB_NAME = "state.json"
 
 NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
@@ -160,24 +162,60 @@ def check_all(addresses: list[Address]) -> list[tuple[Address, OutageStatus]]:
 # ---------------------------------------------------------------------------
 
 
-def load_state() -> dict[str, Any]:
-    """Load previous outage state from disk.
+def _get_blob_client() -> Any | None:
+    """Get a BlobClient for the state blob, or None if not configured."""
+    conn_str = os.environ.get("AzureWebJobsStorage", "")  # noqa: SIM112
+    if not conn_str or conn_str.startswith("UseDevelopment"):
+        return None
+    try:
+        from azure.storage.blob import BlobServiceClient
 
+        service = BlobServiceClient.from_connection_string(conn_str)
+        container = service.get_container_client(_BLOB_CONTAINER)
+        if not container.exists():
+            container.create_container()
+        return container.get_blob_client(_BLOB_NAME)
+    except Exception:
+        return None
+
+
+def load_state() -> dict[str, Any]:
+    """Load previous outage state.
+
+    Uses Azure Blob Storage when running in Azure, falls back to local file.
     Handles legacy format (plain string values) by migrating to the new
     ``{"status": ..., "since": ..., "last_checked": ...}`` structure.
     """
-    if STATE_FILE.exists():
-        raw: dict[str, Any] = json.loads(STATE_FILE.read_text())
-        for loc_id, value in raw.items():
-            if isinstance(value, str):
-                raw[loc_id] = {"status": value, "since": "", "last_checked": ""}
-        return raw
-    return {}
+    raw: dict[str, Any] = {}
+    blob = _get_blob_client()
+    if blob is not None:
+        try:
+            data = blob.download_blob().readall()
+            raw = json.loads(data)
+        except Exception:
+            return {}
+    elif STATE_FILE.exists():
+        raw = json.loads(STATE_FILE.read_text())
+    else:
+        return {}
+
+    for loc_id, value in raw.items():
+        if isinstance(value, str):
+            raw[loc_id] = {"status": value, "since": "", "last_checked": ""}
+    return raw
 
 
 def save_state(state: dict[str, Any]) -> None:
-    """Save current outage state to disk."""
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    """Save current outage state.
+
+    Uses Azure Blob Storage when running in Azure, falls back to local file.
+    """
+    data = json.dumps(state, indent=2)
+    blob = _get_blob_client()
+    if blob is not None:
+        blob.upload_blob(data, overwrite=True)
+    else:
+        STATE_FILE.write_text(data)
 
 
 # ---------------------------------------------------------------------------
