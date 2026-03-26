@@ -13,7 +13,7 @@ import nbn_monitor
 app = func.FunctionApp()
 
 
-@app.timer_trigger(schedule="0 */5 * * * *", arg_name="timer", run_on_startup=True)
+@app.timer_trigger(schedule="0 */5 * * * *", arg_name="timer", run_on_startup=False)
 def poll_nbn(timer: func.TimerRequest) -> None:
     """Poll all addresses and notify on status changes."""
     addresses = nbn_monitor.load_addresses()
