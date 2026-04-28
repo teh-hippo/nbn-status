@@ -50,11 +50,18 @@ uv run pytest tests/
 
 Deployed as an Azure Function App (Consumption Plan, Python 3.12).
 
-- **Timer trigger**: polls every 5 minutes, sends ntfy on status changes
-- **HTTP trigger**: serves the status page at the root URL
+- **Timer trigger**: polls every 5 minutes, sends ntfy on successful NBN status changes
+- **HTTP trigger**: serves the status page at the root URL from the stored Blob snapshot
+- **State**: Azure Blob Storage is authoritative in Azure; local `state.json` is for development only
 - **Auth**: Azure Entra ID (Easy Auth) with user assignment required
 - **CI/CD**: GitHub Actions validates on push, deploys on merge to `main`
 - **Deploy auth**: OIDC federated credentials (no stored secrets)
 - **Dependencies**: managed by [Renovate](https://docs.renovatebot.com/) with auto-merge
 
 See `deploy.sh` for initial Azure resource setup.
+
+### Operations notes
+
+The status page shows the last known good NBN status from Blob Storage. Transient poll errors are logged and stored as error metadata, but they do not start, resolve, or reset outages.
+
+Application Insights is the primary live log source. To inspect the state blob directly, the operator identity needs Blob data-plane access, such as Storage Blob Data Reader, on the storage account or container.

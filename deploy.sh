@@ -25,6 +25,7 @@ az storage account create \
   --resource-group "$RESOURCE_GROUP" \
   --location "$LOCATION" \
   --sku Standard_LRS \
+  --min-tls-version TLS1_2 \
   --output none
 
 # Create Function App (Consumption plan, Python 3.12)
@@ -38,6 +39,16 @@ az functionapp create \
   --runtime-version 3.12 \
   --functions-version 4 \
   --os-type Linux \
+  --output none
+
+APP_ID="$(az functionapp show \
+  --name "$APP_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --query id \
+  --output tsv)"
+az resource update \
+  --ids "$APP_ID" \
+  --set properties.httpsOnly=true \
   --output none
 
 # Configure app settings
@@ -69,5 +80,5 @@ func azure functionapp publish "$APP_NAME" --python
 
 echo ""
 echo "=== Deployment complete ==="
-echo "Status page: https://$APP_NAME.azurewebsites.net/api/status"
+echo "Status page: https://$APP_NAME.azurewebsites.net/"
 echo "Timer: polls every 5 minutes automatically"

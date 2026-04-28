@@ -175,6 +175,19 @@ class TestCheckOutage:
         assert "timeout" in result.error
         assert result.colour == "grey"
 
+    def test_request_exception_scrubs_sensitive_url(self) -> None:
+        session = MagicMock()
+        session.get.side_effect = nbn_monitor.niquests.RequestException(
+            "500 Server Error for url: "
+            "https://places.nbnco.net.au/places/v1/maintenance?locationId=LOCSECRET123"
+        )
+
+        result = nbn_monitor.check_outage("LOC000000000001", session=session)
+        assert result.error is not None
+        assert "[url]" in result.error
+        assert "https://" not in result.error
+        assert "LOCSECRET123" not in result.error
+
     def test_creates_own_session_when_none(self) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -223,7 +236,14 @@ class TestCheckAll:
 class TestState:
     def test_load_empty(self, state_file: Path) -> None:
         with patch.object(nbn_monitor, "STATE_FILE", state_file):
-            assert nbn_monitor.load_state() == {}
+            result = nbn_monitor.load_state_result()
+            assert result.status == "missing"
+            assert nbn_monitor.load_state() == {
+                "schema_version": 2,
+                "generated_at": "",
+                "poll": {},
+                "addresses": {},
+            }
 
     def test_save_and_load(self, state_file: Path) -> None:
         state = {
@@ -241,7 +261,19 @@ class TestState:
         with patch.object(nbn_monitor, "STATE_FILE", state_file):
             nbn_monitor.save_state(state)
             loaded = nbn_monitor.load_state()
-            assert loaded == state
+            assert loaded["schema_version"] == 2
+            assert (
+                loaded["addresses"]["LOC000000000001"]["last_success"]["display_outage"]
+                == "NO_OUTAGE"
+            )
+            assert (
+                loaded["addresses"]["LOC000000000002"]["last_success"]["display_outage"]
+                == "UNPLANNED_INPROGRESS"
+            )
+            assert (
+                loaded["addresses"]["LOC000000000002"]["current_period"]["started_at"]
+                == "2025-01-01T00:00:00+00:00"
+            )
 
     def test_state_backward_compat(self, state_file: Path) -> None:
         """Old-format state (plain string values) is migrated on load."""
@@ -249,16 +281,88 @@ class TestState:
         state_file.write_text(json.dumps(old_state))
         with patch.object(nbn_monitor, "STATE_FILE", state_file):
             loaded = nbn_monitor.load_state()
-            assert loaded["LOC000000000001"] == {
-                "status": "NO_OUTAGE",
-                "since": "",
-                "last_checked": "",
-            }
-            assert loaded["LOC000000000002"] == {
-                "status": "UNPLANNED_INPROGRESS",
-                "since": "",
-                "last_checked": "",
-            }
+            assert loaded["schema_version"] == 2
+            assert (
+                loaded["addresses"]["LOC000000000001"]["last_success"]["display_outage"]
+                == "NO_OUTAGE"
+            )
+            assert (
+                loaded["addresses"]["LOC000000000002"]["last_success"]["display_outage"]
+                == "UNPLANNED_INPROGRESS"
+            )
+
+    def test_corrupt_state_is_explicit(self, state_file: Path) -> None:
+        state_file.write_text("{not json")
+        with patch.object(nbn_monitor, "STATE_FILE", state_file):
+            result = nbn_monitor.load_state_result()
+            assert result.status == "corrupt"
+            assert result.error is not None
+
+    def test_azure_storage_failure_does_not_fall_back_to_local(self, state_file: Path) -> None:
+        state_file.write_text(json.dumps({"LOC000000000001": "NO_OUTAGE"}))
+        with (
+            patch.dict(
+                os.environ,
+                {"AzureWebJobsStorage": "DefaultEndpointsProtocol=https;AccountName=test"},
+            ),
+            patch.object(nbn_monitor, "STATE_FILE", state_file),
+            patch.object(nbn_monitor, "_get_blob_client", side_effect=OSError("blob down")),
+        ):
+            result = nbn_monitor.load_state_result()
+
+        assert result.status == "failed"
+        assert result.state["addresses"] == {}
+
+    def test_malformed_azure_storage_is_failed_load(self, state_file: Path) -> None:
+        state_file.write_text(json.dumps({"LOC000000000001": "NO_OUTAGE"}))
+        with (
+            patch.dict(
+                os.environ,
+                {"AzureWebJobsStorage": "DefaultEndpointsProtocol=https;AccountName=test"},
+            ),
+            patch.object(nbn_monitor, "STATE_FILE", state_file),
+            patch.object(
+                nbn_monitor,
+                "_get_blob_client",
+                side_effect=ValueError(
+                    "malformed DefaultEndpointsProtocol=https;AccountName=test;AccountKey=secret"
+                ),
+            ),
+        ):
+            result = nbn_monitor.load_state_result()
+
+        assert result.status == "failed"
+        assert result.state["addresses"] == {}
+        assert result.error is not None
+        assert "secret" not in result.error
+        assert "AccountKey=[redacted]" in result.error
+        assert "AccountName=[redacted]" in result.error
+
+    def test_azure_save_failure_does_not_fall_back_to_local(
+        self, state_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = {"schema_version": 2, "generated_at": "", "poll": {}, "addresses": {}}
+        with (
+            patch.dict(
+                os.environ,
+                {"AzureWebJobsStorage": "DefaultEndpointsProtocol=https;AccountName=test"},
+            ),
+            patch.object(nbn_monitor, "STATE_FILE", state_file),
+            patch.object(
+                nbn_monitor,
+                "_get_blob_client",
+                side_effect=OSError(
+                    "blob down DefaultEndpointsProtocol=https;AccountName=test;AccountKey=secret"
+                ),
+            ),
+        ):
+            saved = nbn_monitor.save_state(state)
+
+        assert saved is False
+        assert not state_file.exists()
+        stderr = capsys.readouterr().err
+        assert "secret" not in stderr
+        assert "AccountKey=[redacted]" in stderr
 
 
 # ---------------------------------------------------------------------------
@@ -293,13 +397,29 @@ class TestSendNtfy:
             assert headers["Priority"] == "high"
             assert "Actions" in headers
 
-    def test_handles_request_error(self) -> None:
+    def test_handles_request_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         with (
             patch.object(nbn_monitor, "NTFY_TOPIC", "test-topic"),
             patch.object(nbn_monitor.niquests, "post") as mock_post,
         ):
             mock_post.side_effect = nbn_monitor.niquests.RequestException("fail")
             assert nbn_monitor.send_ntfy("title", "msg") is False
+
+        assert "fail" in capsys.readouterr().err
+
+    def test_handles_request_error_scrubs_topic(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with (
+            patch.object(nbn_monitor, "NTFY_TOPIC", "secret-topic"),
+            patch.object(nbn_monitor.niquests, "post") as mock_post,
+        ):
+            mock_post.side_effect = nbn_monitor.niquests.RequestException(
+                "POST https://ntfy.sh/secret-topic failed"
+            )
+            assert nbn_monitor.send_ntfy("title", "msg") is False
+
+        stderr = capsys.readouterr().err
+        assert "[url]" in stderr
+        assert "secret-topic" not in stderr
 
 
 # ---------------------------------------------------------------------------
@@ -426,10 +546,10 @@ class TestNotifyChanges:
 
         with patch.object(nbn_monitor, "send_ntfy"):
             new_state = nbn_monitor.notify_changes(results, previous)
-            assert "LOC000000000001" in new_state
-            entry = new_state["LOC000000000001"]
-            assert entry["status"] == "UNPLANNED_INPROGRESS"
-            assert "since" in entry
+            assert "LOC000000000001" in new_state["addresses"]
+            entry = new_state["addresses"]["LOC000000000001"]
+            assert entry["last_success"]["display_outage"] == "UNPLANNED_INPROGRESS"
+            assert entry["current_period"]["display_outage"] == "UNPLANNED_INPROGRESS"
             assert "last_checked" in entry
 
     def test_outage_resolved_includes_duration(self) -> None:
@@ -452,6 +572,43 @@ class TestNotifyChanges:
             call_kw = mock_ntfy.call_args
             msg = call_kw.kwargs.get("message") or call_kw.args[1]
             assert "after 2h" in msg
+
+    def test_poll_error_does_not_resolve_existing_outage(self) -> None:
+        """A transient poll failure is not a successful service-restored sample."""
+        previous: dict[str, Any] = {
+            "LOC000000000001": {
+                "status": "UNPLANNED_INPROGRESS",
+                "since": "2025-01-01T00:00:00+00:00",
+                "last_checked": "2025-01-01T00:05:00+00:00",
+            },
+        }
+        addr = nbn_monitor.Address(label="Home", loc_id="LOC000000000001", poll=True, notify=True)
+        status = nbn_monitor.OutageStatus(
+            loc_id="LOC000000000001",
+            display_outage="",
+            label="Error",
+            error="timeout",
+            checked_at=time.time(),
+        )
+
+        with patch.object(nbn_monitor, "send_ntfy") as mock_ntfy:
+            new_state = nbn_monitor.notify_changes([(addr, status)], previous)
+
+        mock_ntfy.assert_not_called()
+        entry = new_state["addresses"]["LOC000000000001"]
+        assert entry["last_success"]["display_outage"] == "UNPLANNED_INPROGRESS"
+        assert entry["current_period"]["started_at"] == "2025-01-01T00:00:00+00:00"
+        assert entry["last_error"]["message"] == "timeout"
+
+    def test_missing_previous_state_skips_notification_decisions(self) -> None:
+        results = [self._make_result("Home", "LOC000000000001", "UNPLANNED_INPROGRESS")]
+
+        with patch.object(nbn_monitor, "send_ntfy") as mock_ntfy:
+            new_state = nbn_monitor.notify_changes(results, {}, previous_loaded=False)
+
+        mock_ntfy.assert_not_called()
+        entry = new_state["addresses"]["LOC000000000001"]
+        assert entry["last_success"]["display_outage"] == "UNPLANNED_INPROGRESS"
 
     def test_notify_changes_area_wide(self) -> None:
         """Batch notification: ntfy called once per cycle with area-wide context."""
@@ -688,26 +845,40 @@ class TestMain:
 
 
 class TestHandler:
-    def test_do_get(self, addresses: list[nbn_monitor.Address]) -> None:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = MAINTENANCE_OK
-        mock_resp.raise_for_status = MagicMock()
+    def test_do_get_reads_snapshot_without_polling(
+        self, addresses: list[nbn_monitor.Address], state_file: Path
+    ) -> None:
+        state = nbn_monitor.notify_changes(
+            [
+                (
+                    addresses[0],
+                    nbn_monitor.OutageStatus(
+                        loc_id=addresses[0].loc_id,
+                        display_outage="NO_OUTAGE",
+                        label="No outage",
+                        checked_at=time.time(),
+                    ),
+                )
+            ],
+            {},
+            previous_loaded=False,
+        )
+        state_file.write_text(json.dumps(state))
 
-        with patch.object(nbn_monitor.niquests, "Session") as mock_cls:
-            instance = MagicMock()
-            instance.get.return_value = mock_resp
-            instance.__enter__ = MagicMock(return_value=instance)
-            instance.__exit__ = MagicMock(return_value=False)
-            mock_cls.return_value = instance
-
+        with (
+            patch.object(nbn_monitor, "STATE_FILE", state_file),
+            patch.object(nbn_monitor, "check_all") as mock_check_all,
+        ):
             handler_cls = nbn_monitor.make_handler(addresses)
 
             handler = MagicMock(spec=handler_cls)
             handler.wfile = MagicMock()
             handler_cls.do_GET(handler)
 
-            handler.send_response.assert_called_with(200)
-            handler.wfile.write.assert_called_once()
-            html = handler.wfile.write.call_args.args[0].decode()
-            assert "<!DOCTYPE html>" in html
+        mock_check_all.assert_not_called()
+        handler.send_response.assert_called_with(200)
+        handler.wfile.write.assert_called_once()
+        html = handler.wfile.write.call_args.args[0].decode()
+        assert "<!DOCTYPE html>" in html
+        assert "Home" in html
+        assert "No status snapshot yet" in html

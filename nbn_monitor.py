@@ -9,6 +9,7 @@ import html
 import json
 import os
 import random
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import niquests
 
@@ -33,10 +34,20 @@ NBN_HEADERS = {
 STATE_FILE = Path(os.environ.get("NBN_STATE_FILE", "state.json"))
 _BLOB_CONTAINER = "nbn-state"
 _BLOB_NAME = "state.json"
+_STATE_SCHEMA_VERSION = 2
 
 NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
 STATUS_PAGE_URL = os.environ.get("STATUS_PAGE_URL", "")
+
+StateLoadStatus = Literal["loaded", "missing", "failed", "corrupt"]
+
+_URL_RE = re.compile(r"https?://\S+")
+_LOCATION_ID_RE = re.compile(r"\bLOC[A-Z0-9]+\b")
+_SECRET_FIELD_RE = re.compile(
+    r"\b(AccountName|AccountKey|SharedAccessKey|SharedAccessSignature)=([^;\s]+)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -46,6 +57,25 @@ class Address:
     poll: bool = True
     notify: bool = False
     compare: bool = False
+
+
+@dataclass
+class StateLoadResult:
+    status: StateLoadStatus
+    state: dict[str, Any]
+    source: str
+    error: str | None = None
+
+    @property
+    def can_make_notification_decisions(self) -> bool:
+        return self.status == "loaded"
+
+
+def _safe_error_message(error: BaseException) -> str:
+    message = str(error) or error.__class__.__name__
+    message = _URL_RE.sub("[url]", message)
+    message = _SECRET_FIELD_RE.sub(lambda match: f"{match.group(1)}=[redacted]", message)
+    return _LOCATION_ID_RE.sub("[location]", message)
 
 
 def load_addresses() -> list[Address]:
@@ -114,31 +144,44 @@ def check_outage(loc_id: str, session: niquests.Session | None = None) -> Outage
         do_close = True
 
     try:
-        resp = session.get(url, headers=NBN_HEADERS, timeout=10)
-        if resp.status_code == 404:
-            return OutageStatus(
-                loc_id=loc_id,
-                display_outage="",
-                label="Not connected",
-                error="Not connected to NBN",
-                checked_at=time.time(),
-            )
-        resp.raise_for_status()
-        data: dict[str, Any] = resp.json()
-        display = data.get("displayOutage", "UNKNOWN")
-        return OutageStatus(
-            loc_id=loc_id,
-            display_outage=display,
-            label=OUTAGE_LABELS.get(display, display),
-            raw=data,
-            checked_at=time.time(),
-        )
+        attempt = 0
+        while True:
+            try:
+                started = time.monotonic()
+                resp = session.get(url, headers=NBN_HEADERS, timeout=10)
+                latency_ms = int((time.monotonic() - started) * 1000)
+                if resp.status_code == 404:
+                    return OutageStatus(
+                        loc_id=loc_id,
+                        display_outage="",
+                        label="Not connected",
+                        error="Not connected to NBN",
+                        checked_at=time.time(),
+                    )
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+                display = data.get("displayOutage", "UNKNOWN")
+                print(f"nbn result status={display} latency_ms={latency_ms}")
+                return OutageStatus(
+                    loc_id=loc_id,
+                    display_outage=display,
+                    label=OUTAGE_LABELS.get(display, display),
+                    raw=data,
+                    checked_at=time.time(),
+                )
+            except niquests.RequestException:
+                attempt += 1
+                if attempt >= 2:
+                    raise
+                time.sleep(0.5)
     except niquests.RequestException as e:
+        message = _safe_error_message(e)
+        print(f"nbn error category=request message={message}", file=sys.stderr)
         return OutageStatus(
             loc_id=loc_id,
             display_outage="",
             label="Error",
-            error=str(e),
+            error=message,
             checked_at=time.time(),
         )
     finally:
@@ -162,60 +205,205 @@ def check_all(addresses: list[Address]) -> list[tuple[Address, OutageStatus]]:
 # ---------------------------------------------------------------------------
 
 
+def _blob_state_configured() -> bool:
+    conn_str = os.environ.get("AzureWebJobsStorage", "")  # noqa: SIM112
+    return bool(conn_str and not conn_str.startswith("UseDevelopment"))
+
+
 def _get_blob_client() -> Any | None:
     """Get a BlobClient for the state blob, or None if not configured."""
     conn_str = os.environ.get("AzureWebJobsStorage", "")  # noqa: SIM112
-    if not conn_str or conn_str.startswith("UseDevelopment"):
+    if not _blob_state_configured():
         return None
+
+    from azure.storage.blob import BlobServiceClient
+
+    service = BlobServiceClient.from_connection_string(conn_str)
+    container = service.get_container_client(_BLOB_CONTAINER)
+    if not container.exists():
+        container.create_container()
+    return container.get_blob_client(_BLOB_NAME)
+
+
+def _empty_snapshot() -> dict[str, Any]:
+    return {
+        "schema_version": _STATE_SCHEMA_VERSION,
+        "generated_at": "",
+        "poll": {},
+        "addresses": {},
+    }
+
+
+def _is_snapshot(state: dict[str, Any]) -> bool:
+    return state.get("schema_version") == _STATE_SCHEMA_VERSION and isinstance(
+        state.get("addresses"), dict
+    )
+
+
+def _address_labels(addresses: list[Address] | None) -> dict[str, str]:
+    if addresses is None:
+        return {}
+    return {addr.loc_id: addr.label for addr in addresses}
+
+
+def _iso_from_timestamp(value: float) -> str:
+    timestamp = value if value else time.time()
+    return datetime.fromtimestamp(timestamp, tz=UTC).isoformat()
+
+
+def _timestamp_from_iso(value: Any) -> float:
+    if not isinstance(value, str) or not value:
+        return time.time()
     try:
-        from azure.storage.blob import BlobServiceClient
-
-        service = BlobServiceClient.from_connection_string(conn_str)
-        container = service.get_container_client(_BLOB_CONTAINER)
-        if not container.exists():
-            container.create_container()
-        return container.get_blob_client(_BLOB_NAME)
-    except Exception:
-        return None
+        return datetime.fromisoformat(value).timestamp()
+    except ValueError:
+        return time.time()
 
 
-def load_state() -> dict[str, Any]:
-    """Load previous outage state.
+def _status_colour(display_outage: str) -> str:
+    return OutageStatus(
+        loc_id="",
+        display_outage=display_outage,
+        label=OUTAGE_LABELS.get(display_outage, display_outage),
+    ).colour
+
+
+def _success_record(status: OutageStatus) -> dict[str, Any]:
+    return {
+        "display_outage": status.display_outage,
+        "label": status.label,
+        "colour": status.colour,
+        "checked_at": _iso_from_timestamp(status.checked_at),
+        "nbn_valid_at": status.raw.get("validAt"),
+    }
+
+
+def _normalise_state(
+    raw: dict[str, Any],
+    addresses: list[Address] | None = None,
+) -> dict[str, Any]:
+    """Return a v2 snapshot, migrating legacy state in memory."""
+    labels = _address_labels(addresses)
+    if _is_snapshot(raw):
+        snapshot = dict(raw)
+        snapshot["addresses"] = dict(raw.get("addresses", {}))
+        for loc_id, label in labels.items():
+            existing_entry = snapshot["addresses"].get(loc_id)
+            if isinstance(existing_entry, dict):
+                existing_entry.setdefault("label", label)
+        return snapshot
+
+    snapshot = _empty_snapshot()
+    migrated: dict[str, Any] = {}
+    for loc_id, value in raw.items():
+        if not isinstance(loc_id, str):
+            continue
+        if isinstance(value, str):
+            status = value
+            since = ""
+            last_checked = ""
+        elif isinstance(value, dict):
+            status = str(value.get("status", ""))
+            since = str(value.get("since", "") or "")
+            last_checked = str(value.get("last_checked", "") or "")
+        else:
+            continue
+
+        entry: dict[str, Any] = {
+            "label": labels.get(loc_id, loc_id),
+            "last_error": None,
+            "consecutive_error_count": 0,
+        }
+        if status:
+            checked_at = last_checked or datetime.now(tz=UTC).isoformat()
+            label = OUTAGE_LABELS.get(status, status)
+            entry["last_success"] = {
+                "display_outage": status,
+                "label": label,
+                "colour": _status_colour(status),
+                "checked_at": checked_at,
+                "nbn_valid_at": None,
+            }
+            entry["status"] = status
+            entry["last_checked"] = checked_at
+            entry["current_period"] = {
+                "display_outage": status,
+                "started_at": since or checked_at,
+                "started_at_source": "observed",
+            }
+            if _was_outage(status):
+                entry["since"] = since or checked_at
+        migrated[loc_id] = entry
+    snapshot["addresses"] = migrated
+    return snapshot
+
+
+def load_state_result(addresses: list[Address] | None = None) -> StateLoadResult:
+    """Load previous outage state with explicit failure semantics.
 
     Uses Azure Blob Storage when running in Azure, falls back to local file.
     Handles legacy format (plain string values) by migrating to the new
-    ``{"status": ..., "since": ..., "last_checked": ...}`` structure.
+    versioned snapshot structure.
     """
-    raw: dict[str, Any] = {}
-    blob = _get_blob_client()
-    if blob is not None:
+    if _blob_state_configured():
         try:
+            from azure.core.exceptions import AzureError, ResourceNotFoundError
+
+            blob = _get_blob_client()
+            if blob is None:
+                return StateLoadResult("failed", _empty_snapshot(), "blob", "Blob not configured")
             data = blob.download_blob().readall()
-            raw = json.loads(data)
-        except Exception:
-            return {}
-    elif STATE_FILE.exists():
+            raw: dict[str, Any] = json.loads(data)
+            return StateLoadResult("loaded", _normalise_state(raw, addresses), "blob")
+        except ResourceNotFoundError:
+            return StateLoadResult("missing", _empty_snapshot(), "blob")
+        except json.JSONDecodeError as e:
+            return StateLoadResult("corrupt", _empty_snapshot(), "blob", _safe_error_message(e))
+        except (AzureError, OSError, ValueError) as e:
+            return StateLoadResult("failed", _empty_snapshot(), "blob", _safe_error_message(e))
+
+    if not STATE_FILE.exists():
+        return StateLoadResult("missing", _empty_snapshot(), "file")
+    try:
         raw = json.loads(STATE_FILE.read_text())
-    else:
-        return {}
-
-    for loc_id, value in raw.items():
-        if isinstance(value, str):
-            raw[loc_id] = {"status": value, "since": "", "last_checked": ""}
-    return raw
+        return StateLoadResult("loaded", _normalise_state(raw, addresses), "file")
+    except json.JSONDecodeError as e:
+        return StateLoadResult("corrupt", _empty_snapshot(), "file", _safe_error_message(e))
+    except OSError as e:
+        return StateLoadResult("failed", _empty_snapshot(), "file", _safe_error_message(e))
 
 
-def save_state(state: dict[str, Any]) -> None:
-    """Save current outage state.
+def load_state(addresses: list[Address] | None = None) -> dict[str, Any]:
+    """Load previous outage state as a normalised snapshot."""
+    return load_state_result(addresses).state
+
+
+def save_state(state: dict[str, Any]) -> bool:
+    """Save current outage state and report whether persistence succeeded.
 
     Uses Azure Blob Storage when running in Azure, falls back to local file.
     """
     data = json.dumps(state, indent=2)
-    blob = _get_blob_client()
-    if blob is not None:
-        blob.upload_blob(data, overwrite=True)
-    else:
+    if _blob_state_configured():
+        try:
+            from azure.core.exceptions import AzureError
+
+            blob = _get_blob_client()
+            if blob is None:
+                print("state save failed: Blob state is unavailable", file=sys.stderr)
+                return False
+            blob.upload_blob(data, overwrite=True)
+            return True
+        except (AzureError, OSError, ValueError) as e:
+            print(f"state save failed: {_safe_error_message(e)}", file=sys.stderr)
+            return False
+
+    try:
         STATE_FILE.write_text(data)
+        return True
+    except OSError as e:
+        print(f"state save failed: {_safe_error_message(e)}", file=sys.stderr)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +436,7 @@ def send_ntfy(
         resp.raise_for_status()
         return True
     except niquests.RequestException as e:
-        print(f"ntfy error: {e}", file=sys.stderr)
+        print(f"ntfy error: {_safe_error_message(e)}", file=sys.stderr)
         return False
 
 
@@ -258,37 +446,85 @@ def _update_state(
 ) -> dict[str, Any]:
     """Build new state with timestamps from results and previous state."""
     now = datetime.now(tz=UTC).isoformat()
-    new_state: dict[str, Any] = {}
+    snapshot = _normalise_state(previous, [addr for addr, _ in results])
+    snapshot["schema_version"] = _STATE_SCHEMA_VERSION
+    snapshot["generated_at"] = now
+    snapshot["poll"] = {
+        "started_at": now,
+        "completed_at": now,
+        "success_count": sum(1 for _, status in results if not status.error),
+        "error_count": sum(1 for _, status in results if status.error),
+    }
+    addresses_state: dict[str, Any] = snapshot.setdefault("addresses", {})
 
     for addr, status in results:
-        old_entry = previous.get(addr.loc_id, {})
-        if isinstance(old_entry, str):
-            old_entry = {"status": old_entry}
-        old_status = old_entry.get("status", "")
-        old_since = old_entry.get("since", "")
+        existing = addresses_state.get(addr.loc_id)
+        entry = existing if isinstance(existing, dict) else {}
+        old_status = _entry_status(entry)
+        old_period = entry.get("current_period")
+        if not isinstance(old_period, dict):
+            old_period = {}
 
-        entry: dict[str, Any] = {
-            "status": status.display_outage,
-            "last_checked": now,
-        }
+        entry["label"] = addr.label
+
+        if status.error:
+            entry["last_error"] = {
+                "checked_at": _iso_from_timestamp(status.checked_at),
+                "category": "request",
+                "message": status.error,
+            }
+            entry["consecutive_error_count"] = int(entry.get("consecutive_error_count", 0)) + 1
+            addresses_state[addr.loc_id] = entry
+            print(f"poll outcome label={addr.label} result=error")
+            continue
+
+        checked_at = _iso_from_timestamp(status.checked_at)
+        entry["last_success"] = _success_record(status)
+        entry["last_checked"] = checked_at
+        entry["status"] = status.display_outage
+        entry["last_error"] = None
+        entry["consecutive_error_count"] = 0
+
+        old_period_status = str(old_period.get("display_outage", ""))
+        if old_status != status.display_outage or old_period_status != status.display_outage:
+            entry["current_period"] = {
+                "display_outage": status.display_outage,
+                "started_at": _status_started_at(status, checked_at),
+                "started_at_source": _status_started_at_source(status),
+            }
+        elif "current_period" not in entry:
+            entry["current_period"] = {
+                "display_outage": status.display_outage,
+                "started_at": checked_at,
+                "started_at_source": "observed",
+            }
 
         if status.is_outage:
-            if _was_outage(old_status) and old_since:
-                entry["since"] = old_since
-            else:
-                entry["since"] = now
+            period = entry.get("current_period")
+            if isinstance(period, dict):
+                entry["since"] = period.get("started_at", checked_at)
+        else:
+            entry.pop("since", None)
 
-        new_state[addr.loc_id] = entry
+        addresses_state[addr.loc_id] = entry
+        print(f"poll outcome label={addr.label} result=success status={status.display_outage}")
 
-    return new_state
+    return snapshot
 
 
 def notify_changes(
     results: list[tuple[Address, OutageStatus]],
     previous: dict[str, Any],
+    *,
+    previous_loaded: bool = True,
 ) -> dict[str, Any]:
     """Compare results with previous state, notify on changes, return new state."""
+    previous_snapshot = _normalise_state(previous, [addr for addr, _ in results])
     new_state = _update_state(results, previous)
+
+    if not previous_loaded:
+        print("notification decisions skipped: previous state was not loaded")
+        return new_state
 
     # Determine transitions for notify=True addresses
     started: list[tuple[Address, OutageStatus]] = []
@@ -297,15 +533,17 @@ def notify_changes(
     for addr, status in results:
         if not addr.notify:
             continue
-        old_entry = previous.get(addr.loc_id, {})
-        if isinstance(old_entry, str):
-            old_entry = {"status": old_entry}
-        old_status = old_entry.get("status", "")
+        if status.error:
+            print(f"notification skipped label={addr.label} reason=poll_error")
+            continue
+
+        old_entry = _snapshot_entry(previous_snapshot, addr.loc_id)
+        old_status = _entry_status(old_entry)
 
         if status.is_outage and not _was_outage(old_status):
             started.append((addr, status))
         elif not status.is_outage and _was_outage(old_status):
-            old_since = old_entry.get("since")
+            old_since = _entry_since(old_entry)
             duration_str = ""
             if old_since:
                 try:
@@ -357,6 +595,62 @@ def notify_changes(
         )
 
     return new_state
+
+
+def _snapshot_entry(snapshot: dict[str, Any], loc_id: str) -> dict[str, Any]:
+    if _is_snapshot(snapshot):
+        addresses = snapshot.get("addresses", {})
+        if isinstance(addresses, dict):
+            entry = addresses.get(loc_id, {})
+            return entry if isinstance(entry, dict) else {}
+        return {}
+    entry = snapshot.get(loc_id, {})
+    if isinstance(entry, str):
+        return {"status": entry}
+    return entry if isinstance(entry, dict) else {}
+
+
+def _entry_status(entry: dict[str, Any]) -> str:
+    last_success = entry.get("last_success")
+    if isinstance(last_success, dict):
+        return str(last_success.get("display_outage", ""))
+    return str(entry.get("status", ""))
+
+
+def _entry_since(entry: dict[str, Any]) -> str:
+    period = entry.get("current_period")
+    if isinstance(period, dict):
+        return str(period.get("started_at", "") or "")
+    return str(entry.get("since", "") or "")
+
+
+def _status_started_at(status: OutageStatus, fallback: str) -> str:
+    timing = _status_timing(status.raw)
+    started_at = timing.get("started_at")
+    return started_at if started_at else fallback
+
+
+def _status_started_at_source(status: OutageStatus) -> str:
+    timing = _status_timing(status.raw)
+    return "nbn" if timing.get("started_at") else "observed"
+
+
+def _status_timing(raw: dict[str, Any]) -> dict[str, str]:
+    """Extract useful timing fields from known NBN payload shapes."""
+    planned = raw.get("plannedOutages")
+    if isinstance(planned, dict):
+        primary = planned.get("primary")
+        if isinstance(primary, dict):
+            started_at = primary.get("maintenanceStartTime") or primary.get("interruptionStartTime")
+            ended_at = primary.get("maintenanceEndTime")
+            result: dict[str, str] = {}
+            if isinstance(started_at, str) and started_at:
+                result["started_at"] = started_at
+            if isinstance(ended_at, str) and ended_at:
+                result["ended_at"] = ended_at
+            if result:
+                return result
+    return {}
 
 
 def _was_outage(display_outage: str) -> bool:
@@ -484,6 +778,8 @@ _COLOURS: dict[str, dict[str, str]] = {
 def generate_html(
     results: list[tuple[Address, OutageStatus]],
     state: dict[str, Any] | None = None,
+    *,
+    warning: str = "",
 ) -> str:
     """Generate a self-contained HTML status page."""
     cards = ""
@@ -494,13 +790,12 @@ def generate_html(
             label = html.escape(status.error if status.error else status.label)
             since_text = ""
             if status.is_outage and not status.error and state:
-                loc_entry = state.get(addr.loc_id)
-                if isinstance(loc_entry, dict) and "since" in loc_entry:
-                    try:
-                        since_dt = datetime.fromisoformat(loc_entry["since"]).astimezone()
-                        since_text = " (since " + since_dt.strftime("%-I:%M%p").lower() + ")"
-                    except (ValueError, TypeError):
-                        pass
+                since_value = _entry_since(_snapshot_entry(state, addr.loc_id))
+                try:
+                    since_dt = datetime.fromisoformat(since_value).astimezone()
+                    since_text = " (since " + since_dt.strftime("%-I:%M%p").lower() + ")"
+                except (ValueError, TypeError):
+                    pass
             tag = (
                 f'<div class="tag" style="background:{c["tag_bg"]};'
                 f'color:{c["tag_text"]};border:1px solid {c["tag_border"]}">'
@@ -515,6 +810,7 @@ def generate_html(
         </div>"""
 
     timestamp_ms = int(max((s.checked_at for _, s in results), default=time.time()) * 1000)
+    warning_html = f'<div class="warning">{html.escape(warning)}</div>' if warning else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -541,7 +837,10 @@ h1 {{ margin-bottom:1.5rem; font-weight:400; color:#a3a3a3; font-size:1.1rem }}
 .label {{ font-weight:600; font-size:1rem; flex:1 1 0; min-width:0;
           overflow:hidden; text-overflow:ellipsis; white-space:nowrap }}
 .tag {{ font-size:0.7rem; font-weight:600; padding:3px 10px; border-radius:999px;
-        white-space:nowrap; flex-shrink:0; overflow:hidden; text-overflow:ellipsis }}
+         white-space:nowrap; flex-shrink:0; overflow:hidden; text-overflow:ellipsis }}
+.warning {{ width:100%; max-width:420px; margin-bottom:1rem; padding:0.75rem 1rem;
+            border-radius:12px; background:#451a0333; color:#fcd34d;
+            border:1px solid #92400e; font-size:0.85rem }}
 @media (max-width:420px) {{
   .card {{ gap:0.5rem }}
   .tag {{ flex-basis:100%; margin-left:calc(28px + 0.5rem);
@@ -552,6 +851,7 @@ h1 {{ margin-bottom:1.5rem; font-weight:400; color:#a3a3a3; font-size:1.1rem }}
 </head>
 <body>
 <h1>NBN Status Monitor</h1>
+{warning_html}
 {cards}
 <div id="footer"></div>
 <script>
@@ -584,21 +884,72 @@ h1 {{ margin-bottom:1.5rem; font-weight:400; color:#a3a3a3; font-size:1.1rem }}
 </html>"""
 
 
+def results_from_state(
+    addresses: list[Address],
+    state: dict[str, Any],
+) -> list[tuple[Address, OutageStatus]]:
+    """Build display results from the authoritative state snapshot."""
+    snapshot = _normalise_state(state, addresses)
+    results: list[tuple[Address, OutageStatus]] = []
+    for addr in addresses:
+        entry = _snapshot_entry(snapshot, addr.loc_id)
+        last_success = entry.get("last_success")
+        if isinstance(last_success, dict):
+            display = str(last_success.get("display_outage", ""))
+            label = str(last_success.get("label", OUTAGE_LABELS.get(display, display)))
+            checked_at = _timestamp_from_iso(last_success.get("checked_at"))
+            results.append(
+                (
+                    addr,
+                    OutageStatus(
+                        loc_id=addr.loc_id,
+                        display_outage=display,
+                        label=label,
+                        checked_at=checked_at,
+                    ),
+                )
+            )
+            continue
+
+        results.append(
+            (
+                addr,
+                OutageStatus(
+                    loc_id=addr.loc_id,
+                    display_outage="",
+                    label="No data",
+                    error="No status snapshot yet",
+                    checked_at=time.time(),
+                ),
+            )
+        )
+    return results
+
+
+def generate_snapshot_html(addresses: list[Address], load_result: StateLoadResult) -> str:
+    """Generate the status page from stored state without polling NBN."""
+    warning = ""
+    if load_result.status in ("failed", "corrupt"):
+        warning = "Status snapshot is unavailable; showing degraded state."
+    elif load_result.status == "missing":
+        warning = "No status snapshot has been written yet."
+
+    results = results_from_state(addresses, load_result.state)
+    return generate_html(results, state=load_result.state, warning=warning)
+
+
 # ---------------------------------------------------------------------------
 # HTTP server (local)
 # ---------------------------------------------------------------------------
 
 
 def make_handler(addresses: list[Address]) -> type[BaseHTTPRequestHandler]:
-    """Create a request handler that polls and serves the status page."""
+    """Create a request handler that serves the stored status snapshot."""
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            results = check_all(addresses)
-            state = load_state()
-            state = _update_state(results, state)
-            save_state(state)
-            html = generate_html(results, state=state)
+            state_result = load_state_result(addresses)
+            html = generate_snapshot_html(addresses, state_result)
             try:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -639,9 +990,19 @@ def poll(addresses: list[Address], *, notify: bool = False) -> list[tuple[Addres
         print(f"  {symbol} {addr.label}: {status.label}")
 
     if notify:
-        previous = load_state()
-        new_state = notify_changes(results, previous)
-        save_state(new_state)
+        state_result = load_state_result(addresses)
+        if state_result.status in ("failed", "corrupt"):
+            print(
+                f"state load {state_result.status}: {state_result.error}; skipping save",
+                file=sys.stderr,
+            )
+        else:
+            new_state = notify_changes(
+                results,
+                state_result.state,
+                previous_loaded=state_result.can_make_notification_decisions,
+            )
+            save_state(new_state)
 
     return results
 
