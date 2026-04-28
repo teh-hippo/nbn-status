@@ -18,24 +18,17 @@ def poll_nbn(timer: func.TimerRequest) -> None:
     """Poll all addresses and notify on status changes."""
     addresses = nbn_monitor.load_addresses()
     results = nbn_monitor.check_all(addresses)
-    previous = nbn_monitor.load_state()
+    state_result = nbn_monitor.load_state_result(addresses)
 
-    # On first run (no previous state), send a summary notification
-    if not previous:
-        outages = [a for a, s in results if s.is_outage]
-        if outages:
-            msg = "Startup: " + ", ".join(a.label for a in outages) + " in outage"
-        else:
-            msg = "Startup: all addresses clear"
-        nbn_monitor.send_ntfy(
-            title="NBN Monitor Online",
-            message=msg,
-            priority="default",
-            tags="satellite",
+    if state_result.status in ("failed", "corrupt"):
+        print(f"State load {state_result.status}: {state_result.error}; skipping save")
+    else:
+        new_state = nbn_monitor.notify_changes(
+            results,
+            state_result.state,
+            previous_loaded=state_result.can_make_notification_decisions,
         )
-
-    new_state = nbn_monitor.notify_changes(results, previous)
-    nbn_monitor.save_state(new_state)
+        nbn_monitor.save_state(new_state)
 
     for addr, status in results:
         symbol = {"green": "✅", "red": "🔴", "amber": "🟡", "grey": "⚪"}.get(status.colour, "?")
@@ -46,7 +39,6 @@ def poll_nbn(timer: func.TimerRequest) -> None:
 def status_page(req: func.HttpRequest) -> func.HttpResponse:
     """Serve the traffic-light status page."""
     addresses = nbn_monitor.load_addresses()
-    results = nbn_monitor.check_all(addresses)
-    state = nbn_monitor.load_state()
-    html = nbn_monitor.generate_html(results, state=state)
+    state_result = nbn_monitor.load_state_result(addresses)
+    html = nbn_monitor.generate_snapshot_html(addresses, state_result)
     return func.HttpResponse(html, mimetype="text/html", status_code=200)
