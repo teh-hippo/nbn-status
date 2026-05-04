@@ -4,7 +4,7 @@ Guidance for contributors and coding agents working in this repository.
 
 ## Project shape
 
-- This is a Python 3.12 Azure Functions app for monitoring NBN outage status and sending ntfy notifications.
+- This is a Python 3.13 Azure Functions app for monitoring NBN outage status and sending ntfy notifications.
 - Core monitor logic lives in `nbn_monitor.py`.
 - Azure Functions wiring lives in `function_app.py`.
 - Unit and regression tests live in `tests/test_monitor.py`.
