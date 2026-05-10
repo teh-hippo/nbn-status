@@ -4,8 +4,16 @@ Guidance for contributors and coding agents working in this repository.
 
 ## Project shape
 
-- This is a Python 3.13 Azure Functions app for monitoring NBN outage status and sending ntfy notifications.
-- Core monitor logic lives in `nbn_monitor.py`.
+- This is a Python 3.13+ Azure Functions app for monitoring NBN outage status and sending ntfy notifications.
+- Core monitor logic lives in the `nbn_monitor/` package, split into focused modules:
+  - `config.py` — environment variables, `Address` dataclass, `load_addresses`.
+  - `api.py` — NBN API client (`OutageStatus`, `check_outage`, `check_all`).
+  - `state.py` — typed `Snapshot` model and `StateBackend` protocol with `BlobStateBackend` and `FileStateBackend`.
+  - `notify.py` — ntfy delivery and `notify_changes` transition logic.
+  - `render.py` — HTML rendering of the status page.
+  - `server.py` — local development HTTP server.
+  - `orchestrator.py` — `run_poll_cycle`, the single source of truth for polling, persisting, and notifying.
+  - `cli.py` — argparse `main` entry point (`python -m nbn_monitor`).
 - Azure Functions wiring lives in `function_app.py`.
 - Unit and regression tests live in `tests/test_monitor.py`.
 - `host.json` sets an empty route prefix, so the HTTP status page is served from `/`, not `/api/status`.
@@ -38,7 +46,7 @@ Guidance for contributors and coding agents working in this repository.
 uv sync --frozen
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy nbn_monitor.py
+uv run mypy nbn_monitor function_app.py
 NBN_ADDRESSES='[{"label":"test","loc_id":"LOC000000000001","poll":true,"notify":false}]' uv run pytest tests/ -v
 ```
 
