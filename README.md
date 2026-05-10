@@ -24,9 +24,9 @@ cp .env.example .env
 # Edit .env with your addresses and ntfy topic
 
 # Run locally
-uv run python nbn_monitor.py              # Poll and print status
-uv run python nbn_monitor.py --notify     # Poll with ntfy notifications
-uv run python nbn_monitor.py --serve      # Status page on localhost:8000
+uv run python -m nbn_monitor              # Poll and print status
+uv run python -m nbn_monitor --notify     # Poll with ntfy notifications
+uv run python -m nbn_monitor --serve      # Status page on localhost:8000
 ```
 
 ### Finding your LOC ID
@@ -42,13 +42,13 @@ https://places.nbnco.net.au/places/v1/autocomplete?query=YOUR+ADDRESS+HERE
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy nbn_monitor.py
+uv run mypy nbn_monitor function_app.py
 uv run pytest tests/
 ```
 
 ## Deployment
 
-Deployed as an Azure Function App (Consumption Plan, Python 3.12).
+Deployed as an Azure Function App (Consumption Plan, Python 3.14).
 
 - **Timer trigger**: polls every 5 minutes, sends ntfy on successful NBN status changes
 - **HTTP trigger**: serves the status page at the root URL from the stored Blob snapshot
