@@ -29,12 +29,13 @@ jobs:
 
       - uses: astral-sh/setup-uv@v8.1.0
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Build deployment package
         run: |
           mkdir -p .deploy/.python_packages/lib/site-packages
-          cp function_app.py nbn_monitor.py host.json requirements.txt .deploy/
+          cp function_app.py host.json requirements.txt .deploy/
+          cp -r nbn_monitor .deploy/
           uv pip install --target .deploy/.python_packages/lib/site-packages -r requirements.txt
 
       - name: Azure Login (OIDC)
