@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.1.0
         with:
-          python-version: "3.13"
+          python-version: "3.12"
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.1.0
         with:
-          python-version: "3.13"
+          python-version: "3.12"
       - run: uv sync --frozen
       - run: uv run mypy nbn_monitor function_app.py
 
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.1.0
         with:
-          python-version: "3.13"
+          python-version: "3.12"
       - run: uv sync --frozen
       - run: uv run pytest tests/ -v
         env:

@@ -28,7 +28,10 @@ az storage account create \
   --min-tls-version TLS1_2 \
   --output none
 
-# Create Function App (Consumption plan, Python 3.13)
+# Create Function App (Consumption plan, Python 3.12).
+# Linux Consumption is in feature freeze and does not serve Python 3.13/3.14
+# workers; do not bump this without also moving to Flex Consumption.
+# See AGENTS.md "Runtime constraints".
 echo "Creating function app..."
 az functionapp create \
   --name "$APP_NAME" \
@@ -36,7 +39,7 @@ az functionapp create \
   --storage-account "$STORAGE_NAME" \
   --consumption-plan-location "$LOCATION" \
   --runtime python \
-  --runtime-version 3.13 \
+  --runtime-version 3.12 \
   --functions-version 4 \
   --os-type Linux \
   --output none

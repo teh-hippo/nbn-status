@@ -34,6 +34,30 @@
         "major"
       ],
       "groupName": "all major"
+    },
+    {
+      "description": "Pin azure-functions to 1.x. The 2.x line requires Python >=3.13, which Linux Consumption does not serve. See AGENTS.md 'Runtime constraints'.",
+      "matchPackageNames": [
+        "azure-functions"
+      ],
+      "allowedVersions": "<2.0.0"
+    },
+    {
+      "description": "Pin Python to 3.12. Linux Consumption is in feature freeze and only serves up to Python 3.12. See AGENTS.md 'Runtime constraints'.",
+      "matchPackageNames": [
+        "python"
+      ],
+      "allowedVersions": "<3.13.0"
+    },
+    {
+      "description": "Block the actions/setup-python python-version input from auto-bumping past 3.12.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "allowedVersions": "<3.13.0"
     }
   ],
   "commitMessagePrefix": "build(deps):"
