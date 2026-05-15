@@ -28,7 +28,7 @@ az storage account create \
   --min-tls-version TLS1_2 \
   --output none
 
-# Create Function App (Consumption plan, Python 3.12)
+# Create Function App (Consumption plan, Python 3.13)
 echo "Creating function app..."
 az functionapp create \
   --name "$APP_NAME" \
@@ -36,7 +36,7 @@ az functionapp create \
   --storage-account "$STORAGE_NAME" \
   --consumption-plan-location "$LOCATION" \
   --runtime python \
-  --runtime-version 3.12 \
+  --runtime-version 3.13 \
   --functions-version 4 \
   --os-type Linux \
   --output none
