@@ -48,7 +48,7 @@ uv run pytest tests/
 
 ## Deployment
 
-Deployed as an Azure Function App (Consumption Plan, Python 3.14).
+Deployed as an Azure Function App (Consumption Plan, Python 3.13).
 
 - **Timer trigger**: polls every 5 minutes, sends ntfy on successful NBN status changes
 - **HTTP trigger**: serves the status page at the root URL from the stored Blob snapshot
