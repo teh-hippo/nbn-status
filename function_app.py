@@ -5,11 +5,13 @@ HTTP trigger serves the status page.
 
 The HTTP route runs behind Azure Entra ID Easy Auth. Easy Auth is configured
 on the Function App resource (`Microsoft.Web/sites`), not in code, so this
-module enforces a request-time check rather than a startup guard. If a
-request reaches the function with ``WEBSITE_AUTH_ENABLED != "true"`` while
-the app is hosted in Azure (``WEBSITE_INSTANCE_ID`` is set), the page returns
-HTTP 500 instead of rendering, so an accidentally unprotected deployment
-fails closed.
+module enforces a request-time check rather than a startup guard. When
+``REQUIRE_EASY_AUTH=true`` is set on the hosting Function App, the page
+returns HTTP 500 unless the platform-managed ``WEBSITE_AUTH_ENABLED`` env var
+is also ``"true"``. ``REQUIRE_EASY_AUTH`` is a config-driven assertion that
+the deployment intends to run behind Easy Auth, so an accidentally
+unprotected deployment fails closed regardless of which hosting plan
+provides the runtime.
 """
 
 from __future__ import annotations
@@ -35,7 +37,10 @@ def poll_nbn(timer: func.TimerRequest) -> None:
 def status_page(req: func.HttpRequest) -> func.HttpResponse:
     """Serve the traffic-light status page."""
     del req
-    if os.environ.get("WEBSITE_INSTANCE_ID") and os.environ.get("WEBSITE_AUTH_ENABLED") != "true":
+    if (
+        os.environ.get("REQUIRE_EASY_AUTH") == "true"
+        and os.environ.get("WEBSITE_AUTH_ENABLED") != "true"
+    ):
         return func.HttpResponse(
             "Easy Auth is not enabled on this Function App; refusing to serve the status page.",
             status_code=500,
