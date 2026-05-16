@@ -11,7 +11,7 @@ Includes a dark-themed traffic-light status page for quick visual checks on mobi
 - Tracks outage duration and includes it in resolution notifications
 - Detects whether an outage is localised or area-wide (via neighbour comparison)
 - Traffic-light status page with iOS PWA support
-- Deployed as an Azure Function App on the Consumption Plan (~$0/month)
+- Deployed as an Azure Function App on the Flex Consumption Plan (~$0/month at this poll cadence)
 
 ## Setup
 
@@ -48,17 +48,16 @@ uv run pytest tests/
 
 ## Deployment
 
-Deployed as an Azure Function App (Consumption Plan, Python 3.12).
+Deployed as an Azure Function App (Flex Consumption Plan, Python 3.13).
 
 - **Timer trigger**: polls every 5 minutes, sends ntfy on successful NBN status changes
 - **HTTP trigger**: serves the status page at the root URL from the stored Blob snapshot
 - **State**: Azure Blob Storage is authoritative in Azure; local `state.json` is for development only
 - **Auth**: Azure Entra ID (Easy Auth) with user assignment required
-- **CI/CD**: GitHub Actions validates on push, deploys on merge to `main`
+- **CI/CD**: GitHub Actions validates on push, deploys on merge to `main` via Azure One Deploy with remote build (`Azure/functions-action@v1` with `remote-build: true`)
 - **Deploy auth**: OIDC federated credentials (no stored secrets)
-- **Dependencies**: managed by [Renovate](https://docs.renovatebot.com/) with auto-merge
-
-See `deploy.sh` for initial Azure resource setup.
+- **Dependencies**: managed by [Renovate](https://docs.renovatebot.com/) with auto-merge inside bounded version ranges (`azure-functions ~2`, Python `~3.13`)
+- **Infrastructure**: Terraform module under `infra/`
 
 ### Operations notes
 
