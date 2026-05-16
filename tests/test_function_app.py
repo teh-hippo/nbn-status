@@ -57,7 +57,7 @@ class TestStatusPage:
                 os.environ,
                 {
                     "NBN_ADDRESSES": SAMPLE_ADDRESSES_JSON,
-                    "WEBSITE_INSTANCE_ID": "instance-1",
+                    "REQUIRE_EASY_AUTH": "true",
                     "WEBSITE_AUTH_ENABLED": "true",
                 },
             ),
@@ -71,7 +71,7 @@ class TestStatusPage:
         assert "<!DOCTYPE html>" in body
         assert "Home" in body
 
-    def test_returns_500_when_easy_auth_disabled_in_azure(
+    def test_returns_500_when_require_easy_auth_set_but_auth_disabled(
         self, addresses: list[nbn_monitor.Address], state_file: Path
     ) -> None:
         _seed_snapshot(state_file, addresses)
@@ -80,7 +80,7 @@ class TestStatusPage:
                 os.environ,
                 {
                     "NBN_ADDRESSES": SAMPLE_ADDRESSES_JSON,
-                    "WEBSITE_INSTANCE_ID": "instance-1",
+                    "REQUIRE_EASY_AUTH": "true",
                 },
                 clear=False,
             ),
@@ -93,11 +93,11 @@ class TestStatusPage:
         body = response.get_body().decode()
         assert "Easy Auth" in body
 
-    def test_renders_locally_when_not_in_azure(
+    def test_renders_locally_when_require_easy_auth_unset(
         self, addresses: list[nbn_monitor.Address], state_file: Path
     ) -> None:
         _seed_snapshot(state_file, addresses)
-        env = {k: v for k, v in os.environ.items() if k != "WEBSITE_INSTANCE_ID"}
+        env = {k: v for k, v in os.environ.items() if k != "REQUIRE_EASY_AUTH"}
         env["NBN_ADDRESSES"] = SAMPLE_ADDRESSES_JSON
         with (
             patch.dict(os.environ, env, clear=True),
