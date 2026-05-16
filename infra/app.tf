@@ -26,8 +26,8 @@ resource "azurerm_function_app_flex_consumption" "this" {
 
   runtime_name           = "python"
   runtime_version        = "3.13"
-  instance_memory_in_mb  = 2048
-  maximum_instance_count = 40
+  instance_memory_in_mb  = 512
+  maximum_instance_count = 2
 
   https_only = true
 
