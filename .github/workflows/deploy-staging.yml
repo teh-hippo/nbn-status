@@ -1,0 +1,54 @@
+name: Deploy (staging)
+
+# One-shot deploy used during the Linux Consumption -> Flex Consumption
+# migration to ship the migrate/flex-consumption branch to the new Flex
+# Function App before it becomes the production target. Removed in Phase 5
+# of the migration (see plan).
+#
+# Usage: gh workflow run "Deploy (staging)" \
+#   --ref migrate/flex-consumption \
+#   -f function_app_name=example-app
+
+on:
+  workflow_dispatch:
+    inputs:
+      function_app_name:
+        description: "Target Function App name (must be globally unique on *.azurewebsites.net)"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-staging-${{ github.event.inputs.function_app_name }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.function_app_name }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build source package
+        run: |
+          mkdir -p .deploy
+          cp function_app.py host.json requirements.txt .deploy/
+          cp -r nbn_monitor .deploy/
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Function App
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ github.event.inputs.function_app_name }}
+          package: .deploy
+          remote-build: true

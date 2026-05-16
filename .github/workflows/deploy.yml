@@ -23,20 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - uses: astral-sh/setup-uv@v8.1.0
-        with:
-          python-version: "3.13"
-
-      - name: Build deployment package
+      - name: Build source package
         run: |
-          mkdir -p .deploy/.python_packages/lib/site-packages
+          mkdir -p .deploy
           cp function_app.py host.json requirements.txt .deploy/
           cp -r nbn_monitor .deploy/
-          uv pip install --target .deploy/.python_packages/lib/site-packages -r requirements.txt
 
       - name: Azure Login (OIDC)
         uses: azure/login@v3
@@ -50,3 +41,4 @@ jobs:
         with:
           app-name: ${{ vars.AZURE_FUNCTION_APP_NAME }}
           package: .deploy
+          remote-build: true
