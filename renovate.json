@@ -36,28 +36,28 @@
       "groupName": "all major"
     },
     {
-      "description": "Pin azure-functions to 1.x. The 2.x line requires Python >=3.13, which Linux Consumption does not serve. See AGENTS.md 'Runtime constraints'.",
+      "description": "Hold azure-functions on the 2.x line. 3.x has not been verified on this app's Flex Consumption + Python 3.13 stack.",
       "matchPackageNames": [
         "azure-functions"
       ],
-      "allowedVersions": "<2.0.0"
+      "allowedVersions": "<3.0.0"
     },
     {
-      "description": "Pin Python to 3.12. Linux Consumption is in feature freeze and only serves up to Python 3.12. See AGENTS.md 'Runtime constraints'.",
+      "description": "Hold Python on the 3.13 family. 3.14 is currently Preview on Azure Functions and Flex remote build does not support it yet.",
       "matchPackageNames": [
         "python"
       ],
-      "allowedVersions": "<3.13.0"
+      "allowedVersions": "<3.14.0"
     },
     {
-      "description": "Block the actions/setup-python python-version input from auto-bumping past 3.12.",
+      "description": "Block actions/setup-python python-version from jumping past 3.13.",
       "matchManagers": [
         "github-actions"
       ],
       "matchPackageNames": [
         "python"
       ],
-      "allowedVersions": "<3.13.0"
+      "allowedVersions": "<3.14.0"
     }
   ],
   "commitMessagePrefix": "build(deps):"

@@ -12,8 +12,6 @@ resource "azuread_application" "easy_auth" {
 
   web {
     redirect_uris = [
-      "https://nbn-status.azurewebsites.net/.auth/login/aad/callback",
-      "https://app.example.com/.auth/login/aad/callback",
       "https://${local.default_hostname}/.auth/login/aad/callback",
     ]
     implicit_grant {

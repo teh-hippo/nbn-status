@@ -4,7 +4,7 @@ Guidance for contributors and coding agents working in this repository.
 
 ## Project shape
 
-- This is a Python 3.12 Azure Functions app for monitoring NBN outage status and sending ntfy notifications.
+- This is a Python 3.13 Azure Functions app for monitoring NBN outage status and sending ntfy notifications.
 - Core monitor logic lives in the `nbn_monitor/` package, split into focused modules:
   - `config.py` — environment variables, `Address` dataclass, `load_addresses`.
   - `api.py` — NBN API client (`OutageStatus`, `check_outage`, `check_all`).
@@ -15,7 +15,7 @@ Guidance for contributors and coding agents working in this repository.
   - `orchestrator.py` — `run_poll_cycle`, the single source of truth for polling, persisting, and notifying.
   - `cli.py` — argparse `main` entry point (`python -m nbn_monitor`).
 - Azure Functions wiring lives in `function_app.py`.
-- Unit and regression tests live in `tests/test_monitor.py`.
+- Unit and regression tests live in `tests/`; one file per module (`test_api.py`, `test_orchestrator.py`, etc.). Coverage threshold is 85% (enforced in `pyproject.toml`).
 - `host.json` sets an empty route prefix, so the HTTP status page is served from `/`, not `/api/status`.
 
 ## Architecture rules
@@ -30,13 +30,23 @@ Guidance for contributors and coding agents working in this repository.
 - Failed or corrupt Blob loads must block notification decisions and must not overwrite the authoritative snapshot.
 - Do not log raw LOC IDs, street addresses, ntfy topics, Azure connection strings, or raw state snapshots.
 
-## Runtime constraints
+## Runtime invariants
 
-- Production runs on the Azure Functions Linux Consumption plan, which is in feature freeze and retires on 30 September 2028. It does not serve Python 3.13 or 3.14 worker images, even though `az functionapp list-runtimes` lists them (the CLI does not filter by plan type). Setting `linuxFxVersion` to `Python|3.13` or `Python|3.14` produces an indefinite HTTP 503 with no Application Insights traces.
-- Therefore the entire stack is pinned to Python 3.12: `.python-version`, `pyproject.toml`, both GitHub Actions workflows, `deploy.sh --runtime-version`, and the build environment that produces wheels in the deploy step.
-- `azure-functions` is pinned to `>=1.24,<2`. The 2.x release line bumped `requires-python` to `>=3.13`, so it cannot install on Python 3.12. The 1.x line is still actively maintained and is API-compatible with 2.x for the decorators this app uses.
-- Renovate has explicit `packageRules` to block both bumps. Do not relax those constraints without first migrating the Function App to Flex Consumption (a separate, larger task).
-- CI builds wheels on the GitHub runner with the same Python version Azure runs (3.12), so the binary wheels (e.g. `_cffi_backend.cpython-312-*.so`) match the runtime ABI. Mismatching these produces `ModuleNotFoundError: No module named '_cffi_backend'` at invocation time.
+- Production runs on the Azure Functions **Flex Consumption** plan (FC1, Linux) in `australiaeast`. The Function App name is randomised (`example-app` at time of writing) and the URL is the default `*.azurewebsites.net`; ambiguity comes from the random name, not from a custom domain.
+- The entire stack is pinned to Python **3.13**: `.python-version`, `pyproject.toml`, both GitHub Actions workflows, and the Terraform module's `runtime_version`. The previous Linux Consumption + Python 3.12 + `azure-functions<2` constraints were retired when the app was migrated to Flex.
+- `azure-functions` is pinned to `>=2.1,<3`. The 2.x line is what Flex Consumption + Python 3.13 expect; the 1.x line is no longer used.
+- Renovate has bounded `packageRules` (`azure-functions <3.0.0`, Python `~3.13`) so the next major Python (3.14 preview) and the next major `azure-functions` (3.x) cannot land automatically — both would need a verification round on Flex first.
+- The deploy workflow ships a source-only zip and lets Azure run the One Deploy remote build (`Azure/functions-action@v1` with `remote-build: true`). Do not reintroduce a local `uv pip install --target` step; Flex Consumption installs dependencies server-side from `requirements.txt`.
+- Easy Auth is configured via `auth_settings_v2` on the Function App resource (nested block, not a separate Terraform resource). The Entra ID app registration `bd4a0ca1-…` is shared and survives Function App recreates.
+- The Function App's system-assigned MSI has `Storage Blob Data Contributor` on the `flex-deploy` container only — never on the storage account or on `nbn-state` / `tfstate`. Maintain the container scope when adding new permissions.
+- `function_app.py` reads `REQUIRE_EASY_AUTH=true` as a fail-closed deployment-time assertion. The Terraform module sets this on production; do not remove it.
+
+## Infrastructure
+
+- All Azure resources are managed by the Terraform module under `infra/`. State lives in `examplestore/tfstate/nbn-status.tfstate` (azurerm backend, shared-key auth — `examplestore.allowSharedKeyAccess` must stay `true`).
+- Sensitive runtime config (`MICROSOFT_PROVIDER_AUTHENTICATION_SECRET`, `NTFY_TOPIC`, `NBN_ADDRESSES`) is loaded into `TF_VAR_*` at apply time by `infra/load-secrets.sh`, which reads them from the live Function App.
+- Imported resources (resource group, storage account, `nbn-state` container, Application Insights, Entra ID app reg + SP) carry `lifecycle { prevent_destroy = true }` where appropriate. Do not relax that without an explicit reason.
+- See `infra/README.md` for the apply workflow and constraints.
 
 ## State and notifications
 
@@ -61,7 +71,7 @@ NBN_ADDRESSES='[{"label":"test","loc_id":"LOC000000000001","poll":true,"notify":
 ## Deployment and production
 
 - GitHub Actions validates on push and pull request, and deploys after changes land on `main`.
-- Production runs as Function App `nbn-status` in resource group `example-rg`.
+- Production runs as Function App `example-app` (randomised name; the previous `nbn-status` was retired in the Flex Consumption migration) in resource group `example-rg`.
 - Production HTTP access is protected by Azure Entra ID Easy Auth.
 - Application Insights is the primary source for live proof. Prefer aggregate queries that avoid printing location identifiers or user-specific labels.
 - The public NBN network status page should remain reachable at `https://www.nbnco.com.au/support/network-status`.

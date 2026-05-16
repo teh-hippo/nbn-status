@@ -17,3 +17,6 @@ local.settings.json
 # Generated icons (committed as base64 in code)
 *.png
 .coverage
+
+# Build artifact for ad-hoc deploys
+.deploy/
