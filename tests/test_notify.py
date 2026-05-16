@@ -156,6 +156,9 @@ class TestNotifyChanges:
             msg = call_kw.kwargs.get("message") or call_kw.args[1]
             assert "area-wide" in msg
 
+    def _localised_test(self) -> tuple[nbn_monitor.Address, nbn_monitor.OutageStatus]:
+        return self._make_result("Home", "LOC000000000001", "UNPLANNED_INPROGRESS")
+
     def test_compare_localised(self) -> None:
         results = [
             self._make_result("Home", "LOC000000000001", "UNPLANNED_INPROGRESS"),
@@ -170,6 +173,57 @@ class TestNotifyChanges:
             call_kw = mock_ntfy.call_args
             msg = call_kw.kwargs.get("message") or call_kw.args[1]
             assert "localised" in msg
+            assert "neighbour unaffected" in msg
+
+    def test_no_localisation_hint_when_no_compare_address(self) -> None:
+        """Without any compare address, we have no neighbour data — say nothing."""
+        results = [self._make_result("Home", "LOC000000000001", "UNPLANNED_INPROGRESS")]
+        previous = nbn_monitor.Snapshot.empty()
+
+        with patch.object(nbn_monitor.notify, "send_ntfy") as mock_ntfy:
+            nbn_monitor.notify_changes(results, previous, ntfy=TEST_NTFY)
+            call_kw = mock_ntfy.call_args
+            msg = call_kw.kwargs.get("message") or call_kw.args[1]
+            assert "localised" not in msg
+            assert "may be" not in msg
+            assert "area-wide" not in msg
+
+    def test_degradation_uses_default_priority(self) -> None:
+        """A new degradation event is not promoted to a high-priority outage alert."""
+        results = [self._make_result("Home", "LOC000000000001", "DEGRADATION_INPROGRESS")]
+        previous = v2_snapshot(("LOC000000000001", "NO_OUTAGE", ""))
+
+        with patch.object(nbn_monitor.notify, "send_ntfy") as mock_ntfy:
+            nbn_monitor.notify_changes(results, previous, ntfy=TEST_NTFY)
+            mock_ntfy.assert_called_once()
+            call_kw = mock_ntfy.call_args
+            assert call_kw.kwargs["priority"] == "default"
+            assert "Degradation" in call_kw.kwargs["title"]
+            assert call_kw.kwargs["tags"] == "warning"
+
+    def test_planned_uses_default_priority(self) -> None:
+        """A new planned-maintenance event is not promoted to a high-priority outage alert."""
+        results = [self._make_result("Home", "LOC000000000001", "PLANNED_INPROGRESS")]
+        previous = v2_snapshot(("LOC000000000001", "NO_OUTAGE", ""))
+
+        with patch.object(nbn_monitor.notify, "send_ntfy") as mock_ntfy:
+            nbn_monitor.notify_changes(results, previous, ntfy=TEST_NTFY)
+            mock_ntfy.assert_called_once()
+            call_kw = mock_ntfy.call_args
+            assert call_kw.kwargs["priority"] == "default"
+            assert "Maintenance" in call_kw.kwargs["title"]
+            assert call_kw.kwargs["tags"] == "construction"
+
+    def test_unplanned_outage_keeps_high_priority(self) -> None:
+        results = [self._make_result("Home", "LOC000000000001", "UNPLANNED_INPROGRESS")]
+        previous = v2_snapshot(("LOC000000000001", "NO_OUTAGE", ""))
+
+        with patch.object(nbn_monitor.notify, "send_ntfy") as mock_ntfy:
+            nbn_monitor.notify_changes(results, previous, ntfy=TEST_NTFY)
+            call_kw = mock_ntfy.call_args
+            assert call_kw.kwargs["priority"] == "high"
+            assert call_kw.kwargs["tags"] == "rotating_light"
+            assert "Outage" in call_kw.kwargs["title"]
 
     def test_outage_resolved_includes_duration(self) -> None:
         """When an outage resolves, the message includes 'after Xh Ym'."""
@@ -248,6 +302,9 @@ class TestFormatDuration:
             (8100, "2h 15m"),
             (45 * 60, "45m"),
             (0, "0m"),
+            (24 * 3600, "1d"),
+            (24 * 3600 + 3600, "1d 1h"),
+            (3 * 24 * 3600 + 7 * 3600, "3d 7h"),
         ],
     )
     def test_format_duration(self, seconds: float, expected: str) -> None:
