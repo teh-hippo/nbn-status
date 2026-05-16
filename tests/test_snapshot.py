@@ -35,3 +35,25 @@ class TestSnapshotShape:
             result = nbn_monitor.load_state_result()
             assert result.status == "corrupt"
             assert result.error is not None
+
+    def test_to_dict_emits_schema_version(self) -> None:
+        from nbn_monitor.snapshot import SCHEMA_VERSION
+
+        snapshot = nbn_monitor.Snapshot.empty()
+        assert snapshot.to_dict()["schema_version"] == SCHEMA_VERSION
+
+    def test_state_without_schema_version_loads(self, state_file: Path) -> None:
+        """Existing production blobs were written before the field; accept them."""
+        state_file.write_text(json.dumps({"addresses": {}, "generated_at": ""}))
+        with patch.object(nbn_monitor.persistence, "STATE_FILE", state_file):
+            result = nbn_monitor.load_state_result()
+            assert result.status == "loaded"
+
+    def test_unsupported_schema_version_is_corrupt(self, state_file: Path) -> None:
+        """A future schema version is treated as corrupt rather than misread."""
+        state_file.write_text(json.dumps({"schema_version": 99, "addresses": {}}))
+        with patch.object(nbn_monitor.persistence, "STATE_FILE", state_file):
+            result = nbn_monitor.load_state_result()
+            assert result.status == "corrupt"
+            assert result.error is not None
+            assert "schema_version" in result.error

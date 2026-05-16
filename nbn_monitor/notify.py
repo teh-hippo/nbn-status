@@ -7,6 +7,13 @@ to decide whether to push alerts). Snapshot derivation lives in
 
 The ntfy endpoint is injected as a ``NtfyConfig`` value object; this module
 does not read environment variables directly.
+
+Notifications are categorised by the worst NBN ``displayOutage`` value in
+the cycle:
+
+- ``UNPLANNED_*`` → "Outage Alert", high priority, rotating-light tag.
+- ``DEGRADATION_*`` / ``PLANNED_*`` → "Degradation" or "Maintenance",
+  default priority.
 """
 
 from __future__ import annotations
@@ -60,11 +67,24 @@ def _was_outage(display_outage: str) -> bool:
     return display_outage not in ("NO_OUTAGE", "")
 
 
+def _is_real_outage(display_outage: str) -> bool:
+    """``UNPLANNED_*`` family — what NBN themselves call an outage."""
+    return display_outage.startswith("UNPLANNED")
+
+
+def _is_degradation(display_outage: str) -> bool:
+    return display_outage.startswith("DEGRADATION")
+
+
 def _format_duration(seconds: float) -> str:
     """Format a duration in seconds as a human-readable string, e.g. '2h 15m'."""
     total_minutes = int(seconds) // 60
-    hours = total_minutes // 60
+    days = total_minutes // (60 * 24)
+    hours_in_day = (total_minutes // 60) % 24
     minutes = total_minutes % 60
+    if days:
+        return f"{days}d {hours_in_day}h" if hours_in_day else f"{days}d"
+    hours = total_minutes // 60
     if hours and minutes:
         return f"{hours}h {minutes}m"
     if hours:
@@ -120,6 +140,7 @@ def notify_changes(
     if started:
         all_affected = [(a, s) for a, s in results if display_outage_is_outage(s.display_outage)]
         total = len(results)
+        any_compare_address = any(a.compare for a in (a for a, _ in results))
         compare_down = any(
             a.compare and display_outage_is_outage(s.display_outage) for a, s in results
         )
@@ -135,15 +156,30 @@ def notify_changes(
             msg += "\n(area-wide, neighbour also affected)"
         elif other_down_count > 0:
             msg += f"\n(widespread, {len(all_affected)} of {total} addresses affected)"
+        elif any_compare_address:
+            msg += "\n(localised, neighbour unaffected)"
+
+        any_real_outage = any(_is_real_outage(s.display_outage) for _, s in started)
+        any_degradation = any(_is_degradation(s.display_outage) for _, s in started)
+        if any_real_outage:
+            title = "NBN Outage Alert"
+            priority = "high"
+            tags = "rotating_light"
+        elif any_degradation:
+            title = "NBN Degradation"
+            priority = "default"
+            tags = "warning"
         else:
-            msg += "\n(may be localised)"
+            title = "NBN Maintenance"
+            priority = "default"
+            tags = "construction"
 
         send_ntfy(
             ntfy,
-            title="NBN Outage Alert",
+            title=title,
             message=msg,
-            priority="high",
-            tags="rotating_light",
+            priority=priority,
+            tags=tags,
         )
 
     if resolved:

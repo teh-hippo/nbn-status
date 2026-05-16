@@ -86,7 +86,19 @@ def generate_html(
                 since_value = entry.since
                 try:
                     since_dt = datetime.fromisoformat(since_value).astimezone()
-                    since_text = " (since " + since_dt.strftime("%-I:%M%p").lower() + ")"
+                    now = datetime.now(tz=since_dt.tzinfo)
+                    delta_days = (now.date() - since_dt.date()).days
+                    time_str = since_dt.strftime("%-I:%M%p").lower()
+                    if delta_days == 0:
+                        since_text = f" (since {time_str})"
+                    elif delta_days == 1:
+                        since_text = f" (since yesterday {time_str})"
+                    elif delta_days < 7:
+                        weekday = since_dt.strftime("%a")
+                        since_text = f" (since {weekday} {time_str})"
+                    else:
+                        date_str = since_dt.strftime("%-d %b")
+                        since_text = f" (since {date_str}, {delta_days} days ago)"
                 except (ValueError, TypeError):
                     pass
             tag = (
@@ -149,13 +161,17 @@ h1 {{ margin-bottom:1.5rem; font-weight:400; color:#a3a3a3; font-size:1.1rem }}
 <div id="footer"></div>
 <script>
 (function(){{
-  var u=new Date({timestamp_ms}),el=document.getElementById('footer');
-  var refreshing=false;
+  var snapshotAt=new Date({timestamp_ms}),
+      pageLoadedAt=Date.now(),
+      el=document.getElementById('footer'),
+      refreshing=false,
+      REFRESH_AFTER_MS=60000;
   function t(){{
     if(refreshing) return;
-    var r=Math.max(0,60-Math.floor((Date.now()-u)/1e3));
-    el.textContent='Last updated '+u.toLocaleTimeString()+', refreshing in '+r+'s';
-    if(!r){{
+    var elapsed=Date.now()-pageLoadedAt;
+    var r=Math.max(0,Math.floor((REFRESH_AFTER_MS-elapsed)/1000));
+    el.textContent='Last updated '+snapshotAt.toLocaleTimeString()+', refreshing in '+r+'s';
+    if(elapsed>=REFRESH_AFTER_MS){{
       refreshing=true;
       el.textContent='Refreshing\u2026';
       fetch(location.href).then(function(r){{return r.text()}}).then(function(h){{

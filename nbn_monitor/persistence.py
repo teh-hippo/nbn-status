@@ -39,7 +39,13 @@ def _blob_state_configured() -> bool:
 
 
 def _get_blob_client() -> Any | None:
-    """Get a BlobClient for the state blob, or ``None`` if not configured."""
+    """Get a BlobClient for the state blob, or ``None`` if not configured.
+
+    The ``nbn-state`` container is owned by Terraform (`infra/storage.tf`)
+    and is assumed to exist. If it does not, both load and save will surface
+    the underlying ``ResourceNotFoundError`` through their normal error
+    paths instead of an eager probe-and-create round-trip on every call.
+    """
     conn_str = os.environ.get("AzureWebJobsStorage", "")  # noqa: SIM112
     if not _blob_state_configured():
         return None
@@ -48,8 +54,6 @@ def _get_blob_client() -> Any | None:
 
     service = BlobServiceClient.from_connection_string(conn_str)
     container = service.get_container_client(_BLOB_CONTAINER)
-    if not container.exists():
-        container.create_container()
     return container.get_blob_client(_BLOB_NAME)
 
 

@@ -19,6 +19,8 @@ from typing import Any, Literal
 
 StateLoadStatus = Literal["loaded", "missing", "failed", "corrupt"]
 
+SCHEMA_VERSION = 2
+
 
 class CorruptSnapshotError(ValueError):
     """Raised when a stored state payload is not a valid snapshot."""
@@ -188,6 +190,7 @@ class Snapshot:
     generated_at: str = ""
     poll: PollSummary | None = None
     addresses: dict[str, AddressEntry] = field(default_factory=dict)
+    schema_version: int = SCHEMA_VERSION
 
     @classmethod
     def empty(cls) -> Snapshot:
@@ -198,15 +201,24 @@ class Snapshot:
         """Parse a stored payload into a Snapshot or raise CorruptSnapshotError.
 
         Shape validation is the only gate: a payload must be a dict and must
-        carry an ``addresses`` object. Anything else (including legacy v1
-        blobs that stored a flat ``{LOC: state}`` mapping with no
-        ``addresses`` key) is treated as corrupt so notification decisions
-        and saves are blocked rather than silently overwriting state.
+        carry an ``addresses`` object. ``schema_version`` is enforced when
+        present (must equal the current ``SCHEMA_VERSION``); payloads without
+        a ``schema_version`` field are accepted as the current version for
+        back-compat with state written before the field was introduced.
+        Anything else (including legacy v1 blobs that stored a flat
+        ``{LOC: state}`` mapping with no ``addresses`` key) is treated as
+        corrupt so notification decisions and saves are blocked rather than
+        silently overwriting state.
         """
         if not isinstance(raw, dict):
             raise CorruptSnapshotError("state payload is not a JSON object")
         if "addresses" not in raw:
             raise CorruptSnapshotError("state payload is missing the 'addresses' field")
+        version_raw = raw.get("schema_version", SCHEMA_VERSION)
+        if not isinstance(version_raw, int) or version_raw != SCHEMA_VERSION:
+            raise CorruptSnapshotError(
+                f"unsupported schema_version (expected {SCHEMA_VERSION}, got {version_raw!r})"
+            )
         addresses_raw = raw["addresses"]
         if not isinstance(addresses_raw, dict):
             raise CorruptSnapshotError("addresses field is not an object")
@@ -225,6 +237,7 @@ class Snapshot:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": SCHEMA_VERSION,
             "generated_at": self.generated_at,
             "poll": self.poll.to_dict() if self.poll else {},
             "addresses": {loc_id: entry.to_dict() for loc_id, entry in self.addresses.items()},
