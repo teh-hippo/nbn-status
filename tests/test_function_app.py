@@ -47,8 +47,14 @@ def _seed_snapshot(state_file: Path, addresses: list[nbn_monitor.Address]) -> No
 _STATUS_PAGE = function_app.status_page.build().get_user_function()
 
 
+def _request(headers: dict[str, str] | None = None) -> MagicMock:
+    req = MagicMock(spec=func.HttpRequest)
+    req.headers = headers or {}
+    return req
+
+
 class TestStatusPage:
-    def test_renders_when_easy_auth_enabled(
+    def test_renders_when_easy_auth_principal_header_present(
         self, addresses: list[nbn_monitor.Address], state_file: Path
     ) -> None:
         _seed_snapshot(state_file, addresses)
@@ -58,12 +64,11 @@ class TestStatusPage:
                 {
                     "NBN_ADDRESSES": SAMPLE_ADDRESSES_JSON,
                     "REQUIRE_EASY_AUTH": "true",
-                    "WEBSITE_AUTH_ENABLED": "true",
                 },
             ),
             patch.object(nbn_monitor.persistence, "STATE_FILE", state_file),
         ):
-            response = _STATUS_PAGE(MagicMock(spec=func.HttpRequest))
+            response = _STATUS_PAGE(_request({"X-MS-Client-Principal-Name": "user@example.com"}))
 
         assert response.status_code == 200
         assert response.mimetype == "text/html"
@@ -71,7 +76,7 @@ class TestStatusPage:
         assert "<!DOCTYPE html>" in body
         assert "Home" in body
 
-    def test_returns_500_when_require_easy_auth_set_but_auth_disabled(
+    def test_returns_500_when_require_easy_auth_set_but_principal_header_missing(
         self, addresses: list[nbn_monitor.Address], state_file: Path
     ) -> None:
         _seed_snapshot(state_file, addresses)
@@ -86,8 +91,7 @@ class TestStatusPage:
             ),
             patch.object(nbn_monitor.persistence, "STATE_FILE", state_file),
         ):
-            os.environ.pop("WEBSITE_AUTH_ENABLED", None)
-            response = _STATUS_PAGE(MagicMock(spec=func.HttpRequest))
+            response = _STATUS_PAGE(_request())
 
         assert response.status_code == 500
         body = response.get_body().decode()
@@ -103,7 +107,7 @@ class TestStatusPage:
             patch.dict(os.environ, env, clear=True),
             patch.object(nbn_monitor.persistence, "STATE_FILE", state_file),
         ):
-            response = _STATUS_PAGE(MagicMock(spec=func.HttpRequest))
+            response = _STATUS_PAGE(_request())
 
         assert response.status_code == 200
         body = response.get_body().decode()
