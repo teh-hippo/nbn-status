@@ -36,9 +36,9 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy Function App
-        uses: Azure/functions-action@v1
-        with:
-          app-name: ${{ vars.AZURE_FUNCTION_APP_NAME }}
-          package: .deploy
-          remote-build: true
+      - name: Install Azure Functions Core Tools
+        run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
+
+      - name: Deploy Function App (remote build)
+        working-directory: .deploy
+        run: func azure functionapp publish ${{ vars.AZURE_FUNCTION_APP_NAME }} --build remote

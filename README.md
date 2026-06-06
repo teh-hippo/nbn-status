@@ -54,7 +54,7 @@ Deployed as an Azure Function App (Flex Consumption Plan, Python 3.13).
 - **HTTP trigger**: serves the status page at the root URL from the stored Blob snapshot
 - **State**: Azure Blob Storage is authoritative in Azure; local `state.json` is for development only
 - **Auth**: Azure Entra ID (Easy Auth) with user assignment required
-- **CI/CD**: GitHub Actions validates on push, deploys on merge to `main` via Azure One Deploy with remote build (`Azure/functions-action@v1` with `remote-build: true`)
+- **CI/CD**: GitHub Actions validates on push, deploys on merge to `main` via Azure Functions Core Tools (`func azure functionapp publish --build remote`)
 - **Deploy auth**: OIDC federated credentials (no stored secrets)
 - **Dependencies**: managed by [Renovate](https://docs.renovatebot.com/) with auto-merge inside bounded version ranges (`azure-functions ~2`, Python `~3.13`)
 - **Infrastructure**: Terraform module under `infra/`
