@@ -41,4 +41,4 @@ jobs:
 
       - name: Deploy Function App (remote build)
         working-directory: .deploy
-        run: func azure functionapp publish ${{ vars.AZURE_FUNCTION_APP_NAME }} --build remote
+        run: func azure functionapp publish ${{ vars.AZURE_FUNCTION_APP_NAME }} --build remote --python
