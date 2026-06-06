@@ -1,0 +1,6 @@
+# Copy to backend.hcl (gitignored) and fill in the real values, then:
+#   terraform init -backend-config=backend.hcl
+resource_group_name  = "example-rg"
+storage_account_name = "examplestore"
+container_name       = "tfstate"
+key                  = "nbn-status.tfstate"

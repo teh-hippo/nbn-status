@@ -32,18 +32,18 @@ Guidance for contributors and coding agents working in this repository.
 
 ## Runtime invariants
 
-- Production runs on the Azure Functions **Flex Consumption** plan (FC1, Linux) in `australiaeast`. The Function App name is randomised (`example-app` at time of writing) and the URL is the default `*.azurewebsites.net`; ambiguity comes from the random name, not from a custom domain.
+- Production runs on the Azure Functions **Flex Consumption** plan (FC1, Linux) in `australiaeast`. The Function App name is randomised and the URL is the default `*.azurewebsites.net`; ambiguity comes from the random name, not from a custom domain.
 - The entire stack is pinned to Python **3.13**: `.python-version`, `pyproject.toml`, both GitHub Actions workflows, and the Terraform module's `runtime_version`. The previous Linux Consumption + Python 3.12 + `azure-functions<2` constraints were retired when the app was migrated to Flex.
 - `azure-functions` is pinned to `>=2.1,<3`. The 2.x line is what Flex Consumption + Python 3.13 expect; the 1.x line is no longer used.
 - Renovate has bounded `packageRules` (`azure-functions <3.0.0`, Python `~3.13`) so the next major Python (3.14 preview) and the next major `azure-functions` (3.x) cannot land automatically — both would need a verification round on Flex first.
 - The deploy workflow ships a source-only zip and lets Azure run the One Deploy remote build (`Azure/functions-action@v1` with `remote-build: true`). Do not reintroduce a local `uv pip install --target` step; Flex Consumption installs dependencies server-side from `requirements.txt`.
-- Easy Auth is configured via `auth_settings_v2` on the Function App resource (nested block, not a separate Terraform resource). The Entra ID app registration `bd4a0ca1-…` is shared and survives Function App recreates.
+- Easy Auth is configured via `auth_settings_v2` on the Function App resource (nested block, not a separate Terraform resource). The Entra ID app registration (client id supplied via Terraform variables, never committed) is shared and survives Function App recreates.
 - The Function App's system-assigned MSI has `Storage Blob Data Contributor` on the `flex-deploy` container only — never on the storage account or on `nbn-state` / `tfstate`. Maintain the container scope when adding new permissions.
 - `function_app.py` reads `REQUIRE_EASY_AUTH=true` as a fail-closed deployment-time assertion. The Terraform module sets this on production; do not remove it.
 
 ## Infrastructure
 
-- All Azure resources are managed by the Terraform module under `infra/`. State lives in `examplestore/tfstate/nbn-status.tfstate` (azurerm backend, shared-key auth — `examplestore.allowSharedKeyAccess` must stay `true`).
+- All Azure resources are managed by the Terraform module under `infra/`. State lives in the `tfstate` container of the project storage account (azurerm backend, shared-key auth — the storage account's `allowSharedKeyAccess` must stay `true`).
 - Sensitive runtime config (`MICROSOFT_PROVIDER_AUTHENTICATION_SECRET`, `NTFY_TOPIC`, `NBN_ADDRESSES`) is loaded into `TF_VAR_*` at apply time by `infra/load-secrets.sh`, which reads them from the live Function App.
 - Imported resources (resource group, storage account, `nbn-state` container, Application Insights, Entra ID app reg + SP) carry `lifecycle { prevent_destroy = true }` where appropriate. Do not relax that without an explicit reason.
 - See `infra/README.md` for the apply workflow and constraints.
@@ -71,7 +71,7 @@ NBN_ADDRESSES='[{"label":"test","loc_id":"LOC000000000001","poll":true,"notify":
 ## Deployment and production
 
 - GitHub Actions validates on push and pull request, and deploys after changes land on `main`.
-- Production runs as Function App `example-app` (randomised name; the previous `nbn-status` was retired in the Flex Consumption migration) in resource group `example-rg`.
+- Production runs as a Flex Consumption Function App with a randomised name (the previous Linux Consumption app was retired in the migration). Resource names and ids are supplied via gitignored Terraform vars, not committed.
 - Production HTTP access is protected by Azure Entra ID Easy Auth.
 - Application Insights is the primary source for live proof. Prefer aggregate queries that avoid printing location identifiers or user-specific labels.
 - The public NBN network status page should remain reachable at `https://www.nbnco.com.au/support/network-status`.

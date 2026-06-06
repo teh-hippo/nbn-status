@@ -8,8 +8,8 @@
 
 set -euo pipefail
 
-OLD_APP_NAME="${OLD_APP_NAME:-nbn-status}"
-RG="${RESOURCE_GROUP:-example-rg}"
+OLD_APP_NAME="${OLD_APP_NAME:?Set OLD_APP_NAME to the source Function App name}"
+RG="${RESOURCE_GROUP:?Set RESOURCE_GROUP to the resource group name}"
 
 _get() {
   az functionapp config appsettings list \

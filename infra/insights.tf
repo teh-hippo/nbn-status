@@ -5,7 +5,7 @@
 ################################################################################
 
 resource "azurerm_application_insights" "this" {
-  name                = "nbn-status"
+  name                = var.app_insights_name
   resource_group_name = azurerm_resource_group.this.name
   location            = azurerm_resource_group.this.location
   application_type    = "web"

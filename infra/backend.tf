@@ -1,9 +1,9 @@
 terraform {
+  # Partial backend configuration. The sensitive resource group / storage
+  # account names are supplied at init time via a gitignored backend.hcl:
+  #   terraform init -backend-config=backend.hcl
+  # See backend.hcl.example.
   backend "azurerm" {
-    resource_group_name  = "example-rg"
-    storage_account_name = "examplestore"
-    container_name       = "tfstate"
-    key                  = "nbn-status.tfstate"
-    use_azuread_auth     = false
+    use_azuread_auth = false
   }
 }

@@ -1,5 +1,6 @@
 terraform {
-  required_version = ">= 1.5.0"
+  # >= 1.6 required: import block ids reference input variables (see imports.tf).
+  required_version = ">= 1.6.0"
 
   required_providers {
     azurerm = {
