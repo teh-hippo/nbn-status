@@ -71,10 +71,11 @@ class TestGenerateHtml:
 
         from .conftest import v2_snapshot
 
-        long_ago = (datetime.now(tz=UTC) - timedelta(days=17)).isoformat()
+        now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+        long_ago = (now - timedelta(days=17)).isoformat()
         addr = nbn_monitor.Address(label="Home", loc_id="LOC000000000001", poll=True, notify=True)
         snapshot = v2_snapshot(("LOC000000000001", "UNPLANNED_INPROGRESS", long_ago))
-        html = nbn_monitor.generate_html([addr], snapshot)
+        html = nbn_monitor.generate_html([addr], snapshot, now=now)
         # Should include "X days ago" rather than only a time-of-day.
         assert "days ago" in html
 
@@ -83,10 +84,11 @@ class TestGenerateHtml:
 
         from .conftest import v2_snapshot
 
-        yesterday = (datetime.now(tz=UTC) - timedelta(days=1, hours=2)).isoformat()
+        now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+        yesterday = (now - timedelta(days=1)).isoformat()
         addr = nbn_monitor.Address(label="Home", loc_id="LOC000000000001", poll=True, notify=True)
         snapshot = v2_snapshot(("LOC000000000001", "UNPLANNED_INPROGRESS", yesterday))
-        html = nbn_monitor.generate_html([addr], snapshot)
+        html = nbn_monitor.generate_html([addr], snapshot, now=now)
         assert "yesterday" in html
 
     def test_since_tag_says_weekday_for_few_days_old(self) -> None:
@@ -94,10 +96,11 @@ class TestGenerateHtml:
 
         from .conftest import v2_snapshot
 
-        a_few_days_ago = (datetime.now(tz=UTC) - timedelta(days=3)).isoformat()
+        now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+        a_few_days_ago = (now - timedelta(days=3)).isoformat()
         addr = nbn_monitor.Address(label="Home", loc_id="LOC000000000001", poll=True, notify=True)
         snapshot = v2_snapshot(("LOC000000000001", "UNPLANNED_INPROGRESS", a_few_days_ago))
-        html = nbn_monitor.generate_html([addr], snapshot)
+        html = nbn_monitor.generate_html([addr], snapshot, now=now)
         # 3 days ago — should render with a weekday (Mon/Tue/Wed/...) not bare time.
         weekday_present = any(
             d in html for d in ("Mon ", "Tue ", "Wed ", "Thu ", "Fri ", "Sat ", "Sun ")
