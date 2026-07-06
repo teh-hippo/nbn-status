@@ -1,24 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "github>teh-hippo/common-repo-configs//renovate/default.json5"
   ],
-  "labels": [
-    "dependencies"
-  ],
-  "timezone": "Australia/Sydney",
-  "schedule": [
-    "before 7am on Monday"
-  ],
-  "automerge": true,
-  "platformAutomerge": true,
-  "lockFileMaintenance": {
-    "enabled": true,
-    "schedule": [
-      "before 7am on Monday"
-    ],
-    "commitMessageAction": "upgrade"
-  },
   "packageRules": [
     {
       "matchUpdateTypes": [
@@ -59,6 +43,5 @@
       ],
       "allowedVersions": "<3.14.0"
     }
-  ],
-  "commitMessagePrefix": "build(deps):"
+  ]
 }
