@@ -56,8 +56,14 @@ def generate_html(
     snapshot: Snapshot,
     *,
     warning: str = "",
+    now: datetime | None = None,
 ) -> str:
-    """Generate a self-contained HTML status page from the snapshot."""
+    """Generate a self-contained HTML status page from the snapshot.
+
+    ``now`` overrides the reference time used to describe how long ago an
+    outage started; it defaults to the current time and exists so callers
+    (and tests) can render against a fixed clock.
+    """
     cards = ""
     checked_ats: list[float] = []
     for addr in addresses:
@@ -86,8 +92,12 @@ def generate_html(
                 since_value = entry.since
                 try:
                     since_dt = datetime.fromisoformat(since_value).astimezone()
-                    now = datetime.now(tz=since_dt.tzinfo)
-                    delta_days = (now.date() - since_dt.date()).days
+                    reference = (
+                        now.astimezone(since_dt.tzinfo)
+                        if now is not None
+                        else datetime.now(tz=since_dt.tzinfo)
+                    )
+                    delta_days = (reference.date() - since_dt.date()).days
                     time_str = since_dt.strftime("%-I:%M%p").lower()
                     if delta_days == 0:
                         since_text = f" (since {time_str})"
