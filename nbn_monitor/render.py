@@ -12,15 +12,31 @@ from __future__ import annotations
 
 import html
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .api import OUTAGE_LABELS, display_outage_colour, display_outage_is_outage
+from .api import (
+    OUTAGE_LABELS,
+    display_outage_colour,
+    display_outage_is_outage,
+    display_outage_is_service_issue,
+)
+from .planned import (
+    event_local_start,
+    event_start,
+    format_estimated_duration,
+    format_event_date,
+    format_event_end,
+    format_event_time,
+    upcoming_events,
+    visible_events,
+)
 from .snapshot import StateLoadResult, _timestamp_from_iso
 
 if TYPE_CHECKING:
     from .config import Address
-    from .snapshot import Snapshot
+    from .snapshot import AddressEntry, PlannedMaintenance, Snapshot
 
 
 _FAVICON_B64 = (  # noqa: E501
@@ -28,27 +44,7 @@ _FAVICON_B64 = (  # noqa: E501
 )
 
 
-_COLOURS: dict[str, dict[str, str]] = {
-    "green": {"light": "#22c55e"},
-    "red": {
-        "light": "#ef4444",
-        "tag_text": "#fca5a5",
-        "tag_bg": "#991b1b33",
-        "tag_border": "#991b1b",
-    },
-    "amber": {
-        "light": "#f59e0b",
-        "tag_text": "#fcd34d",
-        "tag_bg": "#92400e33",
-        "tag_border": "#92400e",
-    },
-    "grey": {
-        "light": "#9ca3af",
-        "tag_text": "#9ca3af",
-        "tag_bg": "#37415133",
-        "tag_border": "#374151",
-    },
-}
+_STATUS_COLOURS = {"green", "red", "amber", "grey"}
 
 
 def generate_html(
@@ -64,7 +60,8 @@ def generate_html(
     outage started; it defaults to the current time and exists so callers
     (and tests) can render against a fixed clock.
     """
-    cards = ""
+    reference = now or datetime.now(tz=UTC)
+    cards: list[str] = []
     checked_ats: list[float] = []
     for addr in addresses:
         entry = snapshot.entry(addr.loc_id)
@@ -81,48 +78,34 @@ def generate_html(
             checked_ats.append(_timestamp_from_iso(last_success.checked_at))
 
         colour = display_outage_colour(display_outage, error=bool(error))
-        c = _COLOURS.get(colour, _COLOURS["grey"])
+        if colour not in _STATUS_COLOURS:
+            colour = "grey"
 
         is_outage = display_outage_is_outage(display_outage)
         tag = ""
         if is_outage or error:
             text = html.escape(error if error else tag_label)
-            since_text = ""
-            if is_outage and not error and entry is not None:
-                since_value = entry.since
-                try:
-                    since_dt = datetime.fromisoformat(since_value).astimezone()
-                    reference = (
-                        now.astimezone(since_dt.tzinfo)
-                        if now is not None
-                        else datetime.now(tz=since_dt.tzinfo)
-                    )
-                    delta_days = (reference.date() - since_dt.date()).days
-                    time_str = since_dt.strftime("%-I:%M%p").lower()
-                    if delta_days == 0:
-                        since_text = f" (since {time_str})"
-                    elif delta_days == 1:
-                        since_text = f" (since yesterday {time_str})"
-                    elif delta_days < 7:
-                        weekday = since_dt.strftime("%a")
-                        since_text = f" (since {weekday} {time_str})"
-                    else:
-                        date_str = since_dt.strftime("%-d %b")
-                        since_text = f" (since {date_str}, {delta_days} days ago)"
-                except (ValueError, TypeError):
-                    pass
-            tag = (
-                f'<div class="tag" style="background:{c["tag_bg"]};'
-                f'color:{c["tag_text"]};border:1px solid {c["tag_border"]}">'
-                f"{text}{since_text}</div>"
-            )
+            since_text = _format_since(entry, display_outage, reference)
+            tag = f'<div class="status-tag">{text}{since_text}</div>'
+
         escaped_label = html.escape(addr.label)
-        cards += f"""
-        <div class="card">
-            <div class="light" style="background:{c["light"]};color:{c["light"]}"></div>
+        status_text = html.escape(error if error else (tag_label or "No outage"))
+        maintenance = _maintenance_html(
+            entry.planned_maintenance if entry else [],
+            reference,
+        )
+        cards.append(
+            f"""
+        <section class="card status-{colour}">
+          <div class="status-row">
+            <div class="light" aria-hidden="true"></div>
             <div class="label">{escaped_label}</div>
+            <span class="sr-only">Current status: {status_text}</span>
             {tag}
-        </div>"""
+          </div>
+          {maintenance}
+        </section>"""
+        )
 
     timestamp_ms = int(max(checked_ats, default=time.time()) * 1000)
     warning_html = f'<div class="warning">{html.escape(warning)}</div>' if warning else ""
@@ -139,68 +122,218 @@ def generate_html(
 <link rel="apple-touch-icon" href="data:image/png;base64,{_FAVICON_B64}">
 <title>NBN Status</title>
 <style>
-* {{ margin:0; padding:0; box-sizing:border-box }}
-body {{ font-family:-apple-system,system-ui,sans-serif; background:#111; color:#e5e5e5;
-       display:flex; flex-direction:column; align-items:center;
-       padding:2rem 1rem; padding-top:max(2rem, env(safe-area-inset-top)) }}
-h1 {{ margin-bottom:1.5rem; font-weight:400; color:#a3a3a3; font-size:1.1rem }}
-.card {{ display:flex; align-items:center; gap:0.75rem; background:#1a1a1a;
-         border-radius:12px; padding:1rem 1.25rem; margin-bottom:0.75rem;
-         width:100%; max-width:420px; flex-wrap:wrap }}
-.light {{ width:28px; height:28px; border-radius:50%; flex-shrink:0;
-          box-shadow:0 0 12px currentColor }}
-.label {{ font-weight:600; font-size:1rem; flex:1 1 0; min-width:0;
-          overflow:hidden; text-overflow:ellipsis; white-space:nowrap }}
-.tag {{ font-size:0.7rem; font-weight:600; padding:3px 10px; border-radius:999px;
-         white-space:nowrap; flex-shrink:0; overflow:hidden; text-overflow:ellipsis }}
-.warning {{ width:100%; max-width:420px; margin-bottom:1rem; padding:0.75rem 1rem;
-            border-radius:12px; background:#451a0333; color:#fcd34d;
-            border:1px solid #92400e; font-size:0.85rem }}
-@media (max-width:420px) {{
-  .card {{ gap:0.5rem }}
-  .tag {{ flex-basis:100%; margin-left:calc(28px + 0.5rem);
-          max-width:calc(100% - 28px - 0.5rem) }}
+* {{ box-sizing:border-box }}
+:root {{ color-scheme:dark }}
+body {{ margin:0; min-height:100vh; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",
+       sans-serif; background:#101010; color:#ededed; padding:2rem 1rem;
+       padding-top:max(2rem, env(safe-area-inset-top)) }}
+main {{ width:100%; display:flex; flex-direction:column; align-items:center }}
+h1 {{ margin:0 0 1.5rem; font-size:1.1rem; font-weight:500; color:#b3b3b3 }}
+.cards {{ width:100%; display:flex; flex-direction:column; align-items:center; gap:0.75rem }}
+.card {{ --status:#a3aab5; --tag-text:#cbd5e1; --tag-bg:#1f293780;
+         --tag-border:#475569; width:min(100%,560px); padding:1rem 1.1rem;
+         border:1px solid #252525; border-radius:14px; background:#1a1a1a }}
+.status-green {{ --status:#22c55e }}
+.status-red {{ --status:#ff4d55; --tag-text:#fda4af; --tag-bg:#7f1d1d40;
+               --tag-border:#b91c1c }}
+.status-amber {{ --status:#f59e0b; --tag-text:#fcd34d; --tag-bg:#78350f40;
+                 --tag-border:#a16207 }}
+.status-grey {{ --status:#a3aab5; --tag-text:#cbd5e1; --tag-bg:#1f293780;
+                --tag-border:#475569 }}
+.status-row {{ display:grid; grid-template-columns:28px minmax(0,1fr) auto;
+               align-items:center; gap:0.75rem }}
+.light {{ width:28px; height:28px; border-radius:50%; background:var(--status);
+          box-shadow:0 0 12px var(--status) }}
+.label {{ min-width:0; font-size:1rem; font-weight:650; line-height:1.3;
+          overflow-wrap:anywhere }}
+.status-tag {{ max-width:100%; padding:3px 10px; border:1px solid var(--tag-border);
+               border-radius:999px; background:var(--tag-bg); color:var(--tag-text);
+               font-size:0.72rem; font-weight:650; line-height:1.2 }}
+.maintenance {{ margin:0.9rem 0 0 calc(28px + 0.75rem); border:1px solid #303030;
+                border-radius:10px; background:#151515 }}
+.maintenance summary {{ padding:0.75rem 0.85rem; cursor:pointer; color:#d4d4d4 }}
+.maintenance summary:focus-visible {{ outline:2px solid var(--status); outline-offset:3px;
+                                     border-radius:8px }}
+.maintenance-summary {{ display:grid; grid-template-columns:minmax(0,1fr) auto;
+                        gap:0.35rem 0.75rem; align-items:center }}
+.maintenance-title {{ font-size:0.76rem; font-weight:700; color:#d4d4d4;
+                      text-transform:uppercase; letter-spacing:0.04em }}
+.maintenance-count {{ grid-row:1 / span 2; grid-column:2; color:#a3a3a3;
+                      font-size:0.72rem; white-space:nowrap }}
+.maintenance-next {{ font-size:0.84rem; line-height:1.35; color:#f5f5f5 }}
+.maintenance-list {{ border-top:1px solid #303030 }}
+.maintenance-window {{ padding:0.55rem 0.85rem; background:#181818; color:#a3a3a3;
+                       font-size:0.72rem; font-weight:650 }}
+.maintenance-row {{ display:grid; grid-template-columns:minmax(8rem,0.8fr) minmax(0,1.4fr);
+                    gap:0.25rem 0.75rem; padding:0.75rem 0.85rem }}
+.maintenance-row + .maintenance-row,
+.maintenance-window + .maintenance-row {{ border-top:1px solid #282828 }}
+.maintenance-when {{ font-size:0.8rem; font-weight:650; color:#e5e5e5 }}
+.maintenance-duration {{ font-size:0.8rem; color:#d4d4d4 }}
+.maintenance-meta {{ grid-column:1 / -1; font-size:0.72rem; color:#a3a3a3 }}
+.warning {{ width:min(100%,560px); margin-bottom:1rem; padding:0.75rem 1rem;
+            border:1px solid #92400e; border-radius:12px; background:#451a0333;
+            color:#fcd34d; font-size:0.85rem }}
+.sr-only {{ position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+            overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0 }}
+#footer {{ margin-top:1.5rem; color:#737373; font-size:0.75rem }}
+@media (max-width:520px) {{
+  body {{ padding:1.5rem 0.75rem }}
+  .card {{ padding:0.9rem }}
+  .status-row {{ grid-template-columns:28px minmax(0,1fr); gap:0.55rem 0.65rem }}
+  .status-tag {{ grid-column:2; justify-self:start }}
+  .maintenance {{ margin-left:calc(28px + 0.65rem) }}
+  .maintenance-row {{ grid-template-columns:1fr }}
+  .maintenance-meta {{ grid-column:auto }}
 }}
-#footer {{ margin-top:1.5rem; font-size:0.75rem; color:#525252 }}
 </style>
 </head>
 <body>
-<h1>NBN Status Monitor</h1>
-{warning_html}
-{cards}
-<div id="footer"></div>
+<main>
+  <h1>NBN Status Monitor</h1>
+  {warning_html}
+  <div class="cards">{"".join(cards)}</div>
+  <div id="footer"></div>
+</main>
 <script>
 (function(){{
-  var snapshotAt=new Date({timestamp_ms}),
-      pageLoadedAt=Date.now(),
-      el=document.getElementById('footer'),
-      refreshing=false,
-      REFRESH_AFTER_MS=60000;
+  var snapshotAt=new Date({timestamp_ms}),refreshAt=Date.now()+60000,
+      el=document.getElementById('footer');
   function t(){{
-    if(refreshing) return;
-    var elapsed=Date.now()-pageLoadedAt;
-    var r=Math.max(0,Math.floor((REFRESH_AFTER_MS-elapsed)/1000));
-    el.textContent='Last updated '+snapshotAt.toLocaleTimeString()+', refreshing in '+r+'s';
-    if(elapsed>=REFRESH_AFTER_MS){{
-      refreshing=true;
-      el.textContent='Refreshing\u2026';
-      fetch(location.href).then(function(r){{return r.text()}}).then(function(h){{
-        var d=new DOMParser().parseFromString(h,'text/html');
-        document.body.innerHTML=d.body.innerHTML;
-        var s=d.querySelectorAll('script');
-        s.forEach(function(x){{
-          var n=document.createElement('script');
-          n.textContent=x.textContent;
-          document.body.appendChild(n)
-        }})
-      }}).catch(function(){{location.reload()}})
-    }}
+    var r=Math.max(0,Math.ceil((refreshAt-Date.now())/1000));
+    el.textContent=r
+      ? 'Last updated '+snapshotAt.toLocaleTimeString()+', refreshing in '+r+'s'
+      : 'Refreshing...';
   }}
-  t();setInterval(t,1000)
+  t();setInterval(t,1000);setTimeout(function(){{location.reload()}},60000)
 }})()
 </script>
 </body>
 </html>"""
+
+
+def _format_since(
+    entry: AddressEntry | None,
+    display_outage: str,
+    now: datetime,
+) -> str:
+    if entry is None or display_outage.startswith("PLANNED"):
+        return ""
+    since_value = (
+        entry.service_issue.started_at
+        if display_outage_is_service_issue(display_outage) and entry.service_issue is not None
+        else entry.since
+    )
+    try:
+        since_dt = datetime.fromisoformat(since_value)
+    except (ValueError, TypeError):
+        return ""
+    if since_dt.tzinfo is None:
+        return ""
+
+    zone = _entry_zone(entry)
+    if zone is not None:
+        since_dt = since_dt.astimezone(zone)
+        reference = now.astimezone(zone)
+    else:
+        reference = now.astimezone(since_dt.tzinfo)
+    delta_days = (reference.date() - since_dt.date()).days
+    time_str = since_dt.strftime("%-I:%M%p").lower()
+    if delta_days == 0:
+        return f" (since {time_str})"
+    if delta_days == 1:
+        return f" (since yesterday {time_str})"
+    if delta_days < 7:
+        return f" (since {since_dt.strftime('%a')} {time_str})"
+    return f" (since {since_dt.strftime('%-d %b')}, {delta_days} days ago)"
+
+
+def _entry_zone(entry: AddressEntry) -> ZoneInfo | None:
+    time_zone = entry.time_zone
+    if not time_zone and entry.planned_maintenance:
+        time_zone = entry.planned_maintenance[0].time_zone
+    if not time_zone:
+        return None
+    try:
+        return ZoneInfo(time_zone)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def _maintenance_html(events: list[PlannedMaintenance], now: datetime) -> str:
+    current_and_future = visible_events(events, now)
+    if not current_and_future:
+        return ""
+
+    upcoming = upcoming_events(current_and_future, now)
+    today_events = [
+        event
+        for event in current_and_future
+        if (local := event_local_start(event)) is not None
+        and local.date() == now.astimezone(local.tzinfo).date()
+    ]
+    next_event = today_events[0] if today_events else upcoming[0]
+    local_start = event_local_start(next_event)
+    is_today = bool(local_start and local_start.date() == now.astimezone(local_start.tzinfo).date())
+    next_date = "Today" if is_today else format_event_date(next_event)
+    next_text = (
+        f"{next_date} from {format_event_time(next_event)}, "
+        f"estimated interruption {format_estimated_duration(next_event.duration_minutes)}"
+    )
+    count_text = (
+        "1 interruption"
+        if len(current_and_future) == 1
+        else f"{len(current_and_future)} interruptions"
+    )
+    rows = _maintenance_rows_html(current_and_future)
+    return f"""
+    <details class="maintenance">
+      <summary>
+        <span class="maintenance-summary">
+          <span class="maintenance-title">Planned maintenance</span>
+          <span class="maintenance-next">{html.escape(next_text)}</span>
+          <span class="maintenance-count">{count_text}</span>
+        </span>
+      </summary>
+      <div class="maintenance-list">{rows}</div>
+    </details>"""
+
+
+def _maintenance_rows_html(events: list[PlannedMaintenance]) -> str:
+    rows: list[str] = []
+    previous_end = ""
+    for event in events:
+        end_text = format_event_end(event)
+        if end_text and end_text != previous_end:
+            rows.append(
+                '<div class="maintenance-window">'
+                f"Work scheduled through {html.escape(end_text)}"
+                "</div>"
+            )
+        rows.append(_maintenance_row_html(event))
+        previous_end = end_text
+    return "".join(rows)
+
+
+def _maintenance_row_html(event: PlannedMaintenance) -> str:
+    starts_at = event_start(event)
+    date_text = html.escape(format_event_date(event))
+    time_text = html.escape(format_event_time(event))
+    duration = html.escape(format_estimated_duration(event.duration_minutes))
+    meta = (
+        '<div class="maintenance-meta">Planned power work</div>'
+        if event.planned_power_outage
+        else ""
+    )
+    datetime_attr = html.escape(starts_at.isoformat() if starts_at else event.starts_at)
+    return f"""
+      <div class="maintenance-row">
+        <time class="maintenance-when" datetime="{datetime_attr}">
+          {date_text} from {time_text}
+        </time>
+        <div class="maintenance-duration">Estimated interruption {duration}</div>
+        {meta}
+      </div>"""
 
 
 def generate_snapshot_html(addresses: list[Address], load_result: StateLoadResult) -> str:

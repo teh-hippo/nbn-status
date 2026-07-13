@@ -170,6 +170,18 @@ class TestDisplayOutageColour:
         ("display", "expected"),
         [
             ("NO_OUTAGE", False),
+            ("PLANNED_INPROGRESS", False),
+            ("UNPLANNED_INPROGRESS", True),
+            ("DEGRADATION_INPROGRESS", True),
+        ],
+    )
+    def test_is_service_issue(self, display: str, expected: bool) -> None:
+        assert nbn_monitor.display_outage_is_service_issue(display) is expected
+
+    @pytest.mark.parametrize(
+        ("display", "expected"),
+        [
+            ("NO_OUTAGE", False),
             ("", False),
             ("UNPLANNED_INPROGRESS", True),
             ("PLANNED_INPROGRESS", True),

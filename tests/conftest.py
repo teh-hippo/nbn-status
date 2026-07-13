@@ -8,16 +8,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 import nbn_monitor
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 SAMPLE_ADDRESSES_JSON = json.dumps(
     [
@@ -78,6 +75,10 @@ TEST_NTFY = nbn_monitor.NtfyConfig(
     status_page_url="",
 )
 
+MULTI_WINDOW_MAINTENANCE: dict[str, Any] = json.loads(
+    (Path(__file__).parent / "fixtures" / "multi_window_maintenance.json").read_text()
+)
+
 
 def v2_snapshot(*entries: tuple[str, str, str]) -> nbn_monitor.Snapshot:
     """Build a Snapshot from (loc_id, display_outage, since) tuples.
@@ -89,6 +90,8 @@ def v2_snapshot(*entries: tuple[str, str, str]) -> nbn_monitor.Snapshot:
     for loc_id, display, since in entries:
         last_success: nbn_monitor.StatusRecord | None = None
         current_period: nbn_monitor.Period | None = None
+        service_issue: nbn_monitor.Period | None = None
+        service_notifications = nbn_monitor.ServiceNotificationState()
         if display:
             last_success = nbn_monitor.StatusRecord(
                 display_outage=display,
@@ -101,10 +104,25 @@ def v2_snapshot(*entries: tuple[str, str, str]) -> nbn_monitor.Snapshot:
                 started_at=since,
                 started_at_source="observed",
             )
+            if nbn_monitor.display_outage_is_service_issue(display):
+                service_issue = nbn_monitor.Period(
+                    display_outage=display,
+                    started_at=since,
+                    started_at_source="observed",
+                )
+                service_notifications = nbn_monitor.ServiceNotificationState(
+                    announced_issue=nbn_monitor.Period(
+                        display_outage=display,
+                        started_at=since,
+                        started_at_source="observed",
+                    )
+                )
         addresses[loc_id] = nbn_monitor.AddressEntry(
             label="",
             last_success=last_success,
             current_period=current_period,
+            service_issue=service_issue,
+            service_notifications=service_notifications,
         )
     return nbn_monitor.Snapshot(addresses=addresses)
 

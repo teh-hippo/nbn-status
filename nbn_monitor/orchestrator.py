@@ -15,7 +15,13 @@ from typing import TYPE_CHECKING
 from .api import check_all, display_outage_colour
 from .config import NtfyConfig
 from .derive import derive_snapshot
-from .notify import notify_changes
+from .notify import (
+    apply_planned_deliveries,
+    apply_service_deliveries,
+    notify_changes,
+    notify_planned_maintenance,
+    seed_notification_baselines,
+)
 from .persistence import load_state_result, save_state
 
 if TYPE_CHECKING:
@@ -52,13 +58,24 @@ def run_poll_cycle(addresses: list[Address]) -> list[tuple[Address, OutageStatus
             started_at=started_at,
             completed_at=completed_at,
         )
-        notify_changes(
+        if state_result.status == "missing":
+            seed_notification_baselines(new_snapshot, results)
+        service_deliveries = notify_changes(
             results,
-            state_result.snapshot,
+            new_snapshot,
             previous_loaded=state_result.can_make_notification_decisions,
             ntfy=ntfy,
         )
-        save_state(new_snapshot)
+        apply_service_deliveries(new_snapshot, service_deliveries)
+        planned_deliveries = notify_planned_maintenance(
+            results,
+            new_snapshot,
+            previous_loaded=state_result.can_make_notification_decisions,
+            ntfy=ntfy,
+        )
+        apply_planned_deliveries(new_snapshot, planned_deliveries)
+        if not save_state(new_snapshot):
+            raise RuntimeError("state save failed")
 
     for addr, status in results:
         _print_status_line(addr, status)

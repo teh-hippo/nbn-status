@@ -61,6 +61,11 @@ def display_outage_is_outage(display_outage: str) -> bool:
     return display_outage not in ("NO_OUTAGE", "")
 
 
+def display_outage_is_service_issue(display_outage: str) -> bool:
+    """True for unplanned outages and degradations that need restoration tracking."""
+    return display_outage.startswith(("UNPLANNED", "DEGRADATION"))
+
+
 def check_outage(loc_id: str, session: niquests.Session | None = None) -> OutageStatus:
     """Query the NBN maintenance API for a single location."""
     uid = f"{int(time.time() * 1000)}-{random.randint(100000, 999999)}"

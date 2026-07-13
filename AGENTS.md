@@ -8,7 +8,10 @@ Guidance for contributors and coding agents working in this repository.
 - Core monitor logic lives in the `nbn_monitor/` package, split into focused modules:
   - `config.py` — environment variables, `Address` dataclass, `load_addresses`.
   - `api.py` — NBN API client (`OutageStatus`, `check_outage`, `check_all`).
-  - `state.py` — typed `Snapshot` model and `StateBackend` protocol with `BlobStateBackend` and `FileStateBackend`.
+  - `planned.py` — planned-maintenance parsing, canonical schedule diffs, reminder timing,
+    and shared event formatting.
+  - `snapshot.py` — typed snapshot and planned-maintenance state models.
+  - `persistence.py` — `StateBackend` protocol with Blob and local-file implementations.
   - `notify.py` — ntfy delivery and `notify_changes` transition logic.
   - `render.py` — HTML rendering of the status page.
   - `server.py` — local development HTTP server.
@@ -52,8 +55,21 @@ Guidance for contributors and coding agents working in this repository.
 
 - The current snapshot schema is version 2 with `schema_version`, `generated_at`, `poll`, and `addresses`.
 - Per-address state separates `last_success`, `last_error`, `consecutive_error_count`, and `current_period`.
+- Per-address state also stores the latest normalised planned schedule. Existing version 2
+  snapshots load with empty planned fields, so additions must remain backward-compatible.
+- Service-incident state is independent of `displayOutage` so a temporary `PLANNED_*` status
+  cannot lose an active unplanned/degradation incident. Pending starts and restorations remain
+  queued until ntfy accepts them.
+- Planned notification state stores the last successfully announced schedule and one-shot
+  reminder markers. Advance those markers only after ntfy accepts the notification.
 - `last_success`, `status`, `since`, and `current_period` are only updated from successful NBN responses.
+- Successful but malformed planned schedules must preserve the previous normalised schedule
+  rather than creating false changes or cancellations.
 - Notifications are sent only for successful NBN status transitions and only when the previous state loaded safely.
+- Planned schedules are retained and rendered for every address. Planned notifications are
+  limited to addresses with `notify: true`.
+- Notification delivery is at-least-once because ntfy has no client idempotency key. State
+  save failures must surface rather than silently claiming success.
 
 ## Local tooling
 

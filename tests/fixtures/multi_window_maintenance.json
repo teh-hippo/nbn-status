@@ -1,0 +1,161 @@
+{
+  "plannedOutages": {
+    "primary": {
+      "maintenanceDate": 1783864800000,
+      "state": "First_Day_Active_ETI",
+      "maintenanceStartTime": 1783864800000,
+      "maintenanceEndTime": 1784278800000,
+      "duration": 360,
+      "plannedPowerOutage": false,
+      "overLap": false,
+      "devOnlyMaintenanceDate": "2026-07-13T00:00:00",
+      "devOnlyMaintenanceStart": "2026-07-13T00:00:00",
+      "devOnlyMaintenanceEnd": "2026-07-17T19:00:00"
+    },
+    "maintenanceList": {
+      "1783864800000": [
+        {
+          "maintenanceDate": 1783864800000,
+          "state": "First_Day_Active_ETI",
+          "maintenanceStartTime": 1783864800000,
+          "maintenanceEndTime": 1784278800000,
+          "duration": 360,
+          "plannedPowerOutage": false,
+          "overLap": false,
+          "devOnlyMaintenanceDate": "2026-07-13T00:00:00",
+          "devOnlyMaintenanceStart": "2026-07-13T00:00:00",
+          "devOnlyMaintenanceEnd": "2026-07-17T19:00:00"
+        }
+      ],
+      "1783951200000": [
+        {
+          "maintenanceDate": 1783951200000,
+          "state": "Midway_ETI",
+          "maintenanceStartTime": 1783864800000,
+          "maintenanceEndTime": 1784278800000,
+          "interruptionStartTime": 1783951200000,
+          "duration": 90,
+          "plannedPowerOutage": false,
+          "overLap": false,
+          "devOnlyMaintenanceDate": "2026-07-14T00:00:00",
+          "devOnlyMaintenanceStart": "2026-07-13T00:00:00",
+          "devOnlyMaintenanceEnd": "2026-07-17T19:00:00",
+          "devOnlyInterruptionStart": "2026-07-14T00:00:00"
+        }
+      ],
+      "1784037600000": [
+        {
+          "maintenanceDate": 1784037600000,
+          "state": "Midway_ETI",
+          "maintenanceStartTime": 1783864800000,
+          "maintenanceEndTime": 1784278800000,
+          "interruptionStartTime": 1784037600000,
+          "duration": 90,
+          "plannedPowerOutage": false,
+          "overLap": false,
+          "devOnlyMaintenanceDate": "2026-07-15T00:00:00",
+          "devOnlyMaintenanceStart": "2026-07-13T00:00:00",
+          "devOnlyMaintenanceEnd": "2026-07-17T19:00:00",
+          "devOnlyInterruptionStart": "2026-07-15T00:00:00"
+        }
+      ],
+      "1784124000000": [
+        {
+          "maintenanceDate": 1784124000000,
+          "state": "Midway_ETI",
+          "maintenanceStartTime": 1783864800000,
+          "maintenanceEndTime": 1784278800000,
+          "interruptionStartTime": 1784149200000,
+          "duration": 60,
+          "plannedPowerOutage": false,
+          "overLap": false,
+          "devOnlyMaintenanceDate": "2026-07-16T00:00:00",
+          "devOnlyMaintenanceStart": "2026-07-13T00:00:00",
+          "devOnlyMaintenanceEnd": "2026-07-17T19:00:00",
+          "devOnlyInterruptionStart": "2026-07-16T07:00:00"
+        }
+      ],
+      "1784210400000": [
+        {
+          "maintenanceDate": 1784210400000,
+          "state": "Last_Day_ETI",
+          "maintenanceStartTime": 1783864800000,
+          "maintenanceEndTime": 1784278800000,
+          "interruptionStartTime": 1784235600000,
+          "duration": 60,
+          "plannedPowerOutage": false,
+          "overLap": false,
+          "devOnlyMaintenanceDate": "2026-07-17T00:00:00",
+          "devOnlyMaintenanceStart": "2026-07-13T00:00:00",
+          "devOnlyMaintenanceEnd": "2026-07-17T19:00:00",
+          "devOnlyInterruptionStart": "2026-07-17T07:00:00"
+        }
+      ],
+      "1784469600000": [
+        {
+          "maintenanceDate": 1784469600000,
+          "state": "First_Day_Not_Active_ETI",
+          "maintenanceStartTime": 1784494800000,
+          "maintenanceEndTime": 1784883600000,
+          "duration": 360,
+          "plannedPowerOutage": false,
+          "overLap": false,
+          "devOnlyMaintenanceDate": "2026-07-20T00:00:00",
+          "devOnlyMaintenanceStart": "2026-07-20T07:00:00",
+          "devOnlyMaintenanceEnd": "2026-07-24T19:00:00"
+        }
+      ],
+      "1784556000000": [
+        {
+          "maintenanceDate": 1784556000000,
+          "state": "Midway_ETI",
+          "maintenanceStartTime": 1784494800000,
+          "maintenanceEndTime": 1784883600000,
+          "interruptionStartTime": 1784581200000,
+          "duration": 90,
+          "plannedPowerOutage": false,
+          "overLap": false,
+          "devOnlyMaintenanceDate": "2026-07-21T00:00:00",
+          "devOnlyMaintenanceStart": "2026-07-20T07:00:00",
+          "devOnlyMaintenanceEnd": "2026-07-24T19:00:00",
+          "devOnlyInterruptionStart": "2026-07-21T07:00:00"
+        }
+      ],
+      "1784642400000": [
+        {
+          "maintenanceDate": 1784642400000,
+          "state": "Midway_ETI",
+          "maintenanceStartTime": 1784494800000,
+          "maintenanceEndTime": 1784883600000,
+          "interruptionStartTime": 1784667600000,
+          "duration": 90,
+          "plannedPowerOutage": false,
+          "overLap": false,
+          "devOnlyMaintenanceDate": "2026-07-22T00:00:00",
+          "devOnlyMaintenanceStart": "2026-07-20T07:00:00",
+          "devOnlyMaintenanceEnd": "2026-07-24T19:00:00",
+          "devOnlyInterruptionStart": "2026-07-22T07:00:00"
+        }
+      ]
+    },
+    "banner": {
+      "ecrqoutage": false,
+      "status": null
+    }
+  },
+  "unplannedOutages": {
+    "current": [
+      {
+        "status": "IN_PROGRESS",
+        "crqClass": null,
+        "isUnplannedNBNOutage": true,
+        "unplannedPowerOutage": false,
+        "networkDegradation": false,
+        "ecrqRequest": false
+      }
+    ]
+  },
+  "displayOutage": "UNPLANNED_INPROGRESS",
+  "validAt": 1783908979000,
+  "timeZoneId": "Australia/Sydney"
+}
